@@ -49,7 +49,7 @@ export default async function ExplorerPage({
           </div>
           <div className="sm:absolute sm:right-0 sm:top-0 h-full flex items-center">
             <a
-              href="https://github.com/vorahardik7/chessbench"
+              href="https://github.com/chess-bench"
               target="_blank"
               rel="noopener noreferrer"
               aria-label="Star it on GitHub (opens in new tab)"

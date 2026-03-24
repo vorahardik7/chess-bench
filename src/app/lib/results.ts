@@ -29,6 +29,10 @@ type DatasetPuzzleRow = {
 type RunAttempt = {
   puzzleId?: string;
   track?: string;
+  ratingBucket?: string;
+  sourceFen?: string;
+  currentFen?: string;
+  initialMove?: string;
   expectedLine?: string;
   parsedLine?: string | null;
   rawOutput?: string;
@@ -265,6 +269,35 @@ async function readRunFiles(): Promise<RunFile[]> {
   }
 }
 
+function derivePuzzlesFromRuns(runs: RunFile[]): PuzzleView[] {
+  const byId = new Map<string, PuzzleView>();
+  for (const run of runs) {
+    for (const attempt of run.attempts ?? []) {
+      const puzzleId = safeString(attempt.puzzleId);
+      if (!puzzleId || byId.has(puzzleId)) continue;
+      const track = normalizeTrack(safeString(attempt.track));
+      const fen = safeString(attempt.currentFen || attempt.sourceFen);
+      if (!track || !fen) continue;
+      const expectedLine = safeString(attempt.expectedLine);
+      const requiredPlies = expectedLine ? expectedLine.trim().split(/\s+/).filter(Boolean).length : 1;
+      byId.set(puzzleId, {
+        id: puzzleId,
+        level: track,
+        fen,
+        requiredPlies: Math.max(1, requiredPlies),
+        rating: null,
+        ratingBucket: safeString(attempt.ratingBucket) || null,
+        expectedLine,
+        initialMove: safeString(attempt.initialMove),
+        source: {
+          url: `https://lichess.org/training/${puzzleId}`,
+        },
+      });
+    }
+  }
+  return Array.from(byId.values()).sort((a, b) => a.id.localeCompare(b.id));
+}
+
 function selectBestRunPerModel(runs: RunFile[], datasetId: string | null): RunFile[] {
   const filteredByDataset = datasetId
     ? runs.filter((run) => safeString(run.datasetId) === datasetId)
@@ -306,10 +339,11 @@ export async function getLatestResults(): Promise<ExplorerResults> {
   const models = selectedRuns
     .map(toModelView)
     .filter((model): model is ModelView => Boolean(model));
+  const fallbackPuzzles = puzzles.length > 0 ? puzzles : derivePuzzlesFromRuns(selectedRuns);
   return {
     datasetId,
     generatedAt,
-    puzzles,
+    puzzles: fallbackPuzzles,
     models,
     runCount: selectedRuns.length,
   };

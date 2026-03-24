@@ -1,36 +1,99 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# chess-bench
 
-## Getting Started
+`chess-bench` is a small project for testing how well language models solve short Lichess puzzles.
 
-First, run the development server:
+The benchmark focuses on simple tactical puzzles like:
+
+- mate in 1
+- mate in 2
+- fork
+- pin
+- hanging piece
+
+The idea is simple:
+
+1. fetch a fixed set of puzzles from the Lichess puzzle dump
+2. run one model against that set
+3. save the answers, tokens, cost, and accuracy
+4. view the results in the app
+
+## What It Does
+
+This project gives each model the same puzzle set and checks whether the model's final UCI move line matches the expected Lichess answer.
+
+It also stores:
+
+- raw model output
+- parsed move line
+- prompt tokens
+- completion tokens
+- reasoning tokens if the provider returns them
+- cost
+- latency
+
+## Fetch Puzzles
+
+Fetch the benchmark puzzle set once with:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm run bench:fetch-puzzles
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+This builds the local puzzle file used by the benchmark.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Run A Benchmark
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+To run one model, you only need:
 
-## Learn More
+- `OPENROUTER_API_KEY`
+- `BENCH_MODEL_ID`
 
-To learn more about Next.js, take a look at the following resources:
+Example:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+OPENROUTER_API_KEY=your_key_here \
+BENCH_MODEL_ID="google/gemini-2.5-flash" \
+pnpm run bench:run
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+If you want a cleaner display name in the UI, you can also set:
 
-## Deploy on Vercel
+```bash
+OPENROUTER_API_KEY=your_key_here \
+BENCH_MODEL_ID="google/gemini-2.5-flash" \
+BENCH_MODEL_NAME="Gemini 2.5 Flash" \
+pnpm run bench:run
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+If you want to tag a run, for example to show that reasoning was enabled, you can add:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+OPENROUTER_API_KEY=your_key_here \
+BENCH_MODEL_ID="google/gemini-2.5-flash" \
+BENCH_MODEL_NAME="Gemini 2.5 Flash" \
+BENCH_BENCHMARK_LABEL="Reasoning" \
+pnpm run bench:run
+```
+
+## View Results
+
+Start the app with:
+
+```bash
+pnpm dev
+```
+
+Then open:
+
+- `http://localhost:3000/puzzle`
+- `http://localhost:3000/benchmark`
+
+The puzzle page shows individual puzzle responses.
+
+The benchmark page shows the leaderboard, per-track scores, cost, and tokens.
+
+## Notes
+
+- Results are saved under `src/bench/results/`
+- The fetched raw puzzle dump is not committed
+- The benchmark is meant for short puzzles, not long chess analysis

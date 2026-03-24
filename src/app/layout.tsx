@@ -3,6 +3,8 @@ import "./globals.css";
 import "@lichess-org/chessground/assets/chessground.base.css";
 import "@lichess-org/chessground/assets/chessground.cburnett.css";
 import "@lichess-org/chessground/assets/chessground.brown.css";
+import { Analytics } from "@vercel/analytics/next"
+
 
 export const metadata: Metadata = {
   title: "ChessBench",
@@ -16,6 +18,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <Analytics />
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
