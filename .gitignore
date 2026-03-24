@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# bench artifacts
+src/bench/data/.cache/
+src/bench/results/

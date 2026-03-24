@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -23,24 +24,13 @@ import {
 } from 'recharts';
 import type { BarShapeProps } from 'recharts';
 import { getModelLogoPath } from './utils';
+import type { ExplorerResults } from '../lib/results.types';
 type BenchModel = {
   id: string;
   name: string;
   score: number;
   breakdown?: Record<string, number>;
 };
-
-type CostReportFile = {
-  models: Array<{
-    id: string;
-    totalCost?: number;
-    totalPromptTokens?: number;
-    totalCompletionTokens?: number;
-  }>;
-};
-
-const EMPTY_MODELS: BenchModel[] = [];
-const EMPTY_PUZZLES: Array<{ level: string }> = [];
 
 const CHART_COLORS = {
   primary: '#2563eb',
@@ -330,15 +320,32 @@ function createCustomXAxisTick(nameToIdMap: Map<string, string>) {
 // ============================================================================
 // BENCHMARKS TAB
 // ============================================================================
-export default function BenchmarksTab() {
-  const models = EMPTY_MODELS;
-  const puzzles = EMPTY_PUZZLES;
+export default function BenchmarksTab({
+  results,
+}: {
+  results: ExplorerResults;
+}) {
+  const models = useMemo<BenchModel[]>(
+    () =>
+      results.models.map((model) => ({
+        id: model.id,
+        name: model.name,
+        score: model.score,
+        breakdown: model.breakdown,
+      })),
+    [results.models]
+  );
+  const puzzles = useMemo<Array<{ level: string }>>(
+    () => results.puzzles.map((puzzle) => ({ level: puzzle.level })),
+    [results.puzzles]
+  );
   const [activeTab, setActiveTab] = useState<'leaderboard' | 'overall'>('leaderboard');
-  const [selectedModels, setSelectedModels] = useState<Set<string>>(() => new Set<string>());
+  const [selectedModels, setSelectedModels] = useState<Set<string>>(
+    () => new Set(results.models.map((model) => model.id))
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('score');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
-  const [costReport] = useState<CostReportFile | null>(null);
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
 
@@ -373,9 +380,17 @@ export default function BenchmarksTab() {
   }, [modelsByScore]);
 
   const costByModel = useMemo(() => {
-    const rows = costReport?.models ?? [];
-    return new Map(rows.map((row) => [row.id, row]));
-  }, [costReport]);
+    return new Map(
+      results.models.map((model) => [
+        model.id,
+        {
+          totalCost: model.summary.totalCost,
+          totalPromptTokens: model.summary.totalPromptTokens,
+          totalCompletionTokens: model.summary.totalCompletionTokens,
+        },
+      ])
+    );
+  }, [results.models]);
 
   const modelNameToIdMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -405,7 +420,9 @@ export default function BenchmarksTab() {
 
   const trackDescription = (id: string) => {
     switch (id) {
+      case 'mateIn1':
       case 'mate1': return 'Force checkmate in one move.';
+      case 'mateIn2':
       case 'mate2': return 'Force checkmate in two moves (3 plies).';
       case 'fork': return 'Attack two or more enemy pieces at once.';
       case 'pin': return 'A piece is stuck because moving it loses a more valuable piece.';
@@ -415,7 +432,7 @@ export default function BenchmarksTab() {
   };
 
   const trackLabel = (id: string) => {
-    const mateMatch = /^mate(\d+)$/.exec(id);
+    const mateMatch = /^(?:mateIn|mate)(\d+)$/i.exec(id);
     if (mateMatch) return `Mate ${mateMatch[1]}`;
     return id
       .replace(/([a-z])([A-Z])/g, '$1 $2')
@@ -676,11 +693,14 @@ export default function BenchmarksTab() {
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-2">
                                 {getModelLogoPath(model.id) && (
-                                  <img
+                                  <Image
                                     src={getModelLogoPath(model.id)!}
                                     alt=""
+                                    width={16}
+                                    height={16}
                                     className="w-4 h-4 flex-shrink-0 mr-1"
                                     style={{ opacity: 0.7 }}
+                                    unoptimized
                                   />
                                 )}
                                 <div className="min-w-0">

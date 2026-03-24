@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "bench:fetch-puzzles": "node src/bench/fetch-puzzles.mjs",
+    "bench:run": "node src/bench/run-benchmark.mjs"
   },
   "dependencies": {
     "@lichess-org/chessground": "^10.1.0",

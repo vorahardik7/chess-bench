@@ -9,7 +9,9 @@ export default async function ExplorerPage({
 }: {
   activeView: 'puzzle' | 'benchmark';
 }) {
-  await getLatestResults();
+  const results = await getLatestResults();
+  const modelCount = results.models.length;
+  const puzzleCount = results.puzzles.length;
 
   return (
     <main className="h-screen flex flex-col overflow-hidden font-sans" style={{ background: 'var(--background)', color: 'var(--text-primary)' }}>
@@ -32,14 +34,14 @@ export default async function ExplorerPage({
               </h1>
               <p className="mt-1 text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>
                 <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
-                  0
+                  {modelCount}
                 </span>{' '}
                 models
                 <span className="mx-1.5 opacity-40" aria-hidden>
                   ·
                 </span>
                 <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
-                  0
+                  {puzzleCount}
                 </span>{' '}
                 puzzles
               </p>
@@ -62,7 +64,7 @@ export default async function ExplorerPage({
         </header>
 
         <Analytics />
-        <BenchmarkExplorer activeView={activeView} />
+        <BenchmarkExplorer activeView={activeView} results={results} />
       </div>
     </main>
   );

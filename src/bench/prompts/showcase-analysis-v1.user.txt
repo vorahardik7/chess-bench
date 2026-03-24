@@ -1,0 +1,25 @@
+Puzzle ID: {{puzzleId}}
+Track: {{track}}
+Rating bucket: {{ratingBucket}}
+Rating: {{rating}}
+
+Source FEN before the preselected move:
+{{sourceFen}}
+
+The preselected move that has already been played:
+{{initialMove}}
+
+Current FEN after that move:
+{{currentFen}}
+
+It is now {{sideToMove}} to move.
+
+Task:
+Return the best continuation line from the current position for exactly {{requiredPlies}} plies.
+Do not repeat the preselected move above.
+Also provide a short tactical explanation for human readers.
+
+Output structure reminder:
+LINE: <uci moves>
+THINKING:
+<3 to 6 short bullet points>

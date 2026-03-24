@@ -3,11 +3,14 @@
 import { useRouter } from 'next/navigation';
 import PuzzlesTab from './PuzzlesTab';
 import BenchmarksTab from './BenchmarksTab';
+import type { ExplorerResults } from '../lib/results.types';
 
 export default function BenchmarkExplorer({
   activeView,
+  results,
 }: {
   activeView: 'puzzle' | 'benchmark';
+  results: ExplorerResults;
 }) {
   const router = useRouter();
 
@@ -46,9 +49,9 @@ export default function BenchmarkExplorer({
       </div>
 
       {/* Content */}
-      <div className="flex-1 min-h-0">
-        {activeView === 'puzzle' && <PuzzlesTab />}
-        {activeView === 'benchmark' && <BenchmarksTab />}
+      <div className="flex flex-col flex-1 min-h-0">
+        {activeView === 'puzzle' && <PuzzlesTab results={results} />}
+        {activeView === 'benchmark' && <BenchmarksTab results={results} />}
       </div>
     </div>
   );
