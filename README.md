@@ -65,16 +65,6 @@ BENCH_MODEL_NAME="Gemini 2.5 Flash" \
 pnpm run bench:run
 ```
 
-If you want to tag a run, for example to show that reasoning was enabled, you can add:
-
-```bash
-OPENROUTER_API_KEY=your_key_here \
-BENCH_MODEL_ID="google/gemini-2.5-flash" \
-BENCH_MODEL_NAME="Gemini 2.5 Flash" \
-BENCH_BENCHMARK_LABEL="Reasoning" \
-pnpm run bench:run
-```
-
 ## View Results
 
 Start the app with:
@@ -96,4 +86,5 @@ The benchmark page shows the leaderboard, per-track scores, cost, and tokens.
 
 - Results are saved under `src/bench/results/`
 - The fetched raw puzzle dump is not committed
+- The prompt lives in `src/bench/prompt.ts`
 - The benchmark is meant for short puzzles, not long chess analysis

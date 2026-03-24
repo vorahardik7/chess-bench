@@ -42,4 +42,4 @@ next-env.d.ts
 
 # bench artifacts
 src/bench/data/.cache/
-src/bench/data/puzzles.v1.json
+src/bench/data/puzzles.json

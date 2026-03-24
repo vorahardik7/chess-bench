@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "src/bench/fetch-puzzles.ts",
+    "src/bench/run-benchmark.ts",
   ]),
 ]);
 

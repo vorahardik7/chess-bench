@@ -7,12 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "bench:fetch-puzzles": "node src/bench/fetch-puzzles.mjs",
-    "bench:run": "node src/bench/run-benchmark.mjs"
+    "bench:fetch-puzzles": "node --import tsx src/bench/fetch-puzzles.ts",
+    "bench:run": "node --import tsx src/bench/run-benchmark.ts"
   },
   "dependencies": {
     "@lichess-org/chessground": "^10.1.0",
     "@vercel/analytics": "^2.0.1",
+    "chess.js": "^1.4.0",
     "lucide-react": "^0.577.0",
     "motion": "^12.38.0",
     "next": "16.2.1",
@@ -21,6 +22,7 @@
     "recharts": "^3.8.0"
   },
   "devDependencies": {
+    "@next/env": "^16.2.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -28,6 +30,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
     "tailwindcss": "^4",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }

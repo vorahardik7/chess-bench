@@ -4,7 +4,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ExplorerResults, ModelView, PuzzleAttemptView, PuzzleView } from './results.types';
 
-const DATASET_PATH = path.resolve(process.cwd(), 'src/bench/data/puzzles.v1.json');
+const DATASET_PATH = path.resolve(process.cwd(), 'src/bench/data/puzzles.json');
 const RESULTS_DIR = path.resolve(process.cwd(), 'src/bench/results');
 
 type DatasetFile = {
@@ -34,7 +34,9 @@ type RunAttempt = {
   currentFen?: string;
   initialMove?: string;
   expectedLine?: string;
+  expectedSanLine?: string | null;
   parsedLine?: string | null;
+  sanLine?: string | null;
   rawOutput?: string;
   thinkingText?: string | null;
   parseStatus?: string;
@@ -57,12 +59,13 @@ type RunFile = {
   modelId?: string;
   modelName?: string;
   benchmarkLabel?: string | null;
-  promptMode?: string;
-  promptVersion?: string;
   summary?: {
     total?: number;
+    parsed?: number;
+    sanConverted?: number;
     correctStrict?: number;
     accuracyStrict?: number;
+    accuracyParsed?: number;
     totalCost?: number;
     totalPromptTokens?: number;
     totalCompletionTokens?: number;
@@ -93,15 +96,6 @@ function modelDisplayName(run: RunFile, modelId: string): string {
   const explicitName = safeString(run.modelName);
   if (explicitName) return explicitName;
   return modelId;
-}
-
-function promptModeLabel(promptMode: string): string {
-  if (promptMode === 'showcase') return 'Showcase';
-  return 'Benchmark';
-}
-
-function isDryRunModel(modelId: string): boolean {
-  return modelId.startsWith('dry-run/');
 }
 
 function toPuzzleView(raw: DatasetPuzzleRow): PuzzleView | null {
@@ -141,7 +135,9 @@ function toAttemptView(raw: RunAttempt): PuzzleAttemptView | null {
     puzzleId,
     track,
     expectedLine: safeString(raw?.expectedLine),
+    expectedSanLine: typeof raw?.expectedSanLine === 'string' ? raw.expectedSanLine : null,
     parsedLine: raw?.parsedLine ?? null,
+    sanLine: typeof raw?.sanLine === 'string' ? raw.sanLine : null,
     rawOutput: safeString(raw?.rawOutput),
     thinkingText: typeof raw?.thinkingText === 'string' ? raw.thinkingText : null,
     parseStatus: safeString(raw?.parseStatus, 'missing'),
@@ -196,9 +192,7 @@ function toModelView(run: RunFile): ModelView | null {
   return {
     id: modelId,
     name: modelDisplayName(run, modelId),
-    sublabel: benchmarkLabel
-      ? `${promptModeLabel(safeString(run.promptMode, 'benchmark'))} · ${benchmarkLabel}`
-      : promptModeLabel(safeString(run.promptMode, 'benchmark')),
+    sublabel: benchmarkLabel ?? undefined,
     benchmarkLabel,
     score: Number((((safeNumber(summary?.accuracyStrict, accuracy)) * 100)).toFixed(1)),
     breakdown,
@@ -305,7 +299,7 @@ function selectBestRunPerModel(runs: RunFile[], datasetId: string | null): RunFi
   const groups = new Map<string, RunFile[]>();
   for (const run of filteredByDataset) {
     const modelId = safeString(run.modelId);
-    if (!modelId || isDryRunModel(modelId)) continue;
+    if (!modelId) continue;
     const list = groups.get(modelId) ?? [];
     list.push(run);
     groups.set(modelId, list);
@@ -318,8 +312,7 @@ function selectBestRunPerModel(runs: RunFile[], datasetId: string | null): RunFi
       const bd = Date.parse(safeString(b.createdAt, '1970-01-01T00:00:00.000Z'));
       return bd - ad;
     });
-    const benchmark = group.find((run) => safeString(run.promptMode) === 'benchmark');
-    selected.push(benchmark ?? group[0]);
+    selected.push(group[0]);
   }
 
   selected.sort((a, b) => {

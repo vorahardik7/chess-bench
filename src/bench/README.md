@@ -10,7 +10,7 @@ pnpm run bench:fetch-puzzles
 
 This writes:
 
-- `src/bench/data/puzzles.v1.json`
+- `src/bench/data/puzzles.json`
 
 ## Run Benchmark (strict scoring)
 
@@ -23,12 +23,6 @@ pnpm run bench:run
 
 Optional vars:
 
-- `BENCH_PROMPT_MODE=benchmark|showcase` (default `benchmark`)
 - `BENCH_MODEL_NAME="Gemini 3 Flash"`
-- `BENCH_BENCHMARK_LABEL="Reasoning"`
-- `BENCH_LIMIT=20`
-- `BENCH_MAX_TOKENS=70`
-- `BENCH_TEMPERATURE=0`
-- `BENCH_STORE_RAW_RESPONSE=1`
 
 Results are written to `src/bench/results/`.

@@ -1,7 +1,0 @@
-You are solving chess tactics from a fixed benchmark.
-
-Hard requirements:
-1) Output only UCI moves.
-2) Output exactly the required number of plies.
-3) Use lowercase moves separated by one space.
-4) Do not include explanation, punctuation, markdown, or any extra text.

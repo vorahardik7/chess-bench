@@ -1,93 +1,31 @@
 #!/usr/bin/env node
+/* eslint-disable @typescript-eslint/ban-ts-comment */
+// @ts-nocheck
 
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import process from "node:process";
+import { Chess } from "chess.js";
+import { envString, envTrimmed, loadBenchEnv } from "./env";
+import { buildUserPrompt, SYSTEM_PROMPT } from "./prompt";
+import benchConfig from "./config";
 
-function parseDotEnv(content) {
-  const out = {};
-  const lines = content.split(/\r?\n/);
-  for (const lineRaw of lines) {
-    const line = lineRaw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq <= 0) continue;
-    let key = line.slice(0, eq).trim();
-    if (key.startsWith("export ")) {
-      key = key.slice("export ".length).trim();
-    }
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-    let value = line.slice(eq + 1).trim();
-    if (
-      (value.startsWith("\"") && value.endsWith("\"")) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    out[key] = value;
-  }
-  return out;
-}
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const DATASET_PATH = path.resolve(process.cwd(), "src/bench/data/puzzles.json");
+const RESULTS_DIR = path.resolve(process.cwd(), "src/bench/results");
+const MAX_TOKENS = 200;
+const MAX_TOKENS_REASONING = 4096;
+const REASONING_EFFORT = "medium";
+const RETRIES = 4;
+const RETRY_BASE_MS = 1200;
+const STORE_RAW_RESPONSE = false;
+const CONCURRENCY = 5;
 
-async function loadEnvFileIfPresent(absPath) {
-  if (!existsSync(absPath)) return false;
-  const content = await readFile(absPath, "utf8");
-  const parsed = parseDotEnv(content);
-  for (const [key, value] of Object.entries(parsed)) {
-    if (!(key in process.env)) {
-      process.env[key] = value;
-    }
-  }
-  return true;
-}
-
-await loadEnvFileIfPresent(path.resolve(process.cwd(), ".env"));
-await loadEnvFileIfPresent(path.resolve(process.cwd(), ".env.local"));
-
-const OPENROUTER_BASE_URL =
-  process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY ?? "";
-const MODEL_ID = process.env.BENCH_MODEL_ID ?? "";
-const MODEL_NAME = process.env.BENCH_MODEL_NAME?.trim() ?? "";
-const BENCHMARK_LABEL = process.env.BENCH_BENCHMARK_LABEL?.trim() ?? "";
-const DATASET_PATH = path.resolve(
-  process.cwd(),
-  process.env.BENCH_DATASET_PATH ?? "src/bench/data/puzzles.v1.json"
-);
-const RESULTS_DIR = path.resolve(
-  process.cwd(),
-  process.env.BENCH_RESULTS_DIR ?? "src/bench/results"
-);
-const PROMPTS_DIR = path.resolve(process.cwd(), "src/bench/prompts");
-const PROMPT_MODE = process.env.BENCH_PROMPT_MODE ?? "benchmark";
-const LIMIT = process.env.BENCH_LIMIT ? Number(process.env.BENCH_LIMIT) : null;
-const TEMPERATURE = Number(process.env.BENCH_TEMPERATURE ?? 0);
-const MAX_TOKENS = Number(
-  process.env.BENCH_MAX_TOKENS ?? (PROMPT_MODE === "showcase" ? 350 : 70)
-);
-const RETRIES = Number(process.env.BENCH_RETRIES ?? 4);
-const RETRY_BASE_MS = Number(process.env.BENCH_RETRY_BASE_MS ?? 1200);
-const STORE_RAW_RESPONSE = process.env.BENCH_STORE_RAW_RESPONSE === "1";
-const INCLUDE_SHOWCASE_THINKING =
-  process.env.BENCH_INCLUDE_SHOWCASE_THINKING !== "0";
-const VALIDATE_SUPPORTED_PARAMS =
-  process.env.BENCH_VALIDATE_SUPPORTED_PARAMS !== "0";
-const DRY_RUN = process.env.BENCH_DRY_RUN === "1";
-
-const PROMPT_PROFILE = {
-  benchmark: {
-    version: "benchmark-uci-v2",
-    systemFile: "benchmark-uci-v1.system.txt",
-    userFile: "benchmark-uci-v1.user.txt",
-  },
-  showcase: {
-    version: "showcase-analysis-v2",
-    systemFile: "showcase-analysis-v1.system.txt",
-    userFile: "showcase-analysis-v1.user.txt",
-  },
-};
+let openrouterApiKey = "";
+let modelId = "";
+let modelName = "";
+let modelSupportedParams = new Set();
+let useReasoning = false;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -114,9 +52,7 @@ function sanitizeModelId(modelId) {
 }
 
 function displayModelName(modelId) {
-  const baseName = MODEL_NAME || modelId;
-  if (!BENCHMARK_LABEL) return baseName;
-  return `${baseName} (${BENCHMARK_LABEL})`;
+  return modelName || modelId;
 }
 
 function normalizeLine(line) {
@@ -125,6 +61,87 @@ function normalizeLine(line) {
 
 function isUciMove(token) {
   return /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(token);
+}
+
+function stripCodeFences(text) {
+  return text.replace(/```[\w]*\n?/g, "").replace(/```/g, "").trim();
+}
+
+function stripSanSymbols(text) {
+  return text
+    .replace(/[+#!?]+/g, "")
+    .replace(/\bx/gi, "")
+    .replace(/\d+\.\s*/g, "");
+}
+
+function normalizeSanToken(token) {
+  let t = token.replace(/[+#!?]+$/, "");
+  if (/^O-O/i.test(t)) return t.replace(/o/gi, (m) => "O");
+  if (/^[kqrbn][a-h1-8x]/i.test(t) && t.length > 1) {
+    t = t[0].toUpperCase() + t.slice(1);
+  }
+  if (/=[qrbn]$/i.test(t)) {
+    t = t.slice(0, -1) + t.slice(-1).toUpperCase();
+  }
+  return t;
+}
+
+function tryParseSanWithChess(rawText, fen, requiredPlies) {
+  if (!fen || !rawText) return null;
+
+  let cleaned = stripCodeFences(rawText);
+  cleaned = cleaned.replace(/[\n\r]+/g, " ").trim();
+  const sanCandidates = cleaned.split(/[\s,]+/).filter(Boolean);
+
+  const sanPattern = /^[KQRBNP]?[a-h]?[1-8]?x?[a-h][1-8](=[QRBN])?[+#]?$/i;
+  const castlePattern = /^O-O(-O)?[+#]?$/i;
+  const pawnPattern = /^[a-h][1-8](=[QRBN])?[+#]?$/i;
+
+  const moveTokens = sanCandidates.filter(
+    (t) => sanPattern.test(t) || castlePattern.test(t) || pawnPattern.test(t)
+  );
+
+  if (moveTokens.length < requiredPlies) return null;
+
+  const chess = new Chess(fen);
+  const uciMoves = [];
+  const sanMoves = [];
+
+  for (let i = 0; i < moveTokens.length && uciMoves.length < requiredPlies; i++) {
+    const normalized = normalizeSanToken(moveTokens[i]);
+    try {
+      const result = chess.move(normalized);
+      if (!result) continue;
+      const uci = result.from + result.to + (result.promotion ?? "");
+      uciMoves.push(uci);
+      sanMoves.push(result.san);
+    } catch {
+      continue;
+    }
+  }
+
+  if (uciMoves.length !== requiredPlies) return null;
+  return { uci: uciMoves.join(" "), san: sanMoves.join(" ") };
+}
+
+function uciLineToSan(uciLine, fen) {
+  if (!uciLine || !fen) return null;
+  try {
+    const chess = new Chess(fen);
+    const tokens = uciLine.trim().split(/\s+/);
+    const sanMoves = [];
+    for (const token of tokens) {
+      const from = token.slice(0, 2);
+      const to = token.slice(2, 4);
+      const promotion = token[4] ?? undefined;
+      const result = chess.move({ from, to, promotion });
+      if (!result) return null;
+      sanMoves.push(result.san);
+    }
+    return sanMoves.join(" ");
+  } catch {
+    return null;
+  }
 }
 
 function parseLineStrict(candidate, requiredPlies) {
@@ -155,45 +172,47 @@ function parseLineStrict(candidate, requiredPlies) {
   };
 }
 
-function parseShowcaseOutput(raw, requiredPlies) {
-  const normalizedRaw = String(raw ?? "");
-  const lineMatch = normalizedRaw.match(/^\s*LINE:\s*(.+)\s*$/im);
-  const thinkingMatch = normalizedRaw.match(/^\s*THINKING:\s*([\s\S]*)$/im);
-  const lineCandidate = lineMatch ? lineMatch[1] : "";
-  const parsed = parseLineStrict(lineCandidate, requiredPlies);
-  const thinkingText =
-    INCLUDE_SHOWCASE_THINKING && thinkingMatch
-      ? thinkingMatch[1].trim() || null
-      : null;
-
-  return {
-    ...parsed,
-    thinkingText,
-    parseStatus: lineMatch ? parsed.parseStatus : "missing_line_label",
-  };
-}
-
-function parseBenchmarkOutput(raw, requiredPlies) {
+function parseBenchmarkOutput(raw, requiredPlies, currentFen = null) {
   const text = String(raw ?? "");
-  const singleLine = normalizeLine(text);
+
+  // Step 1: Strip code fences and try strict parse on cleaned text
+  const cleaned = stripCodeFences(text);
+  const singleLine = normalizeLine(cleaned);
   const strictParsed = parseLineStrict(singleLine, requiredPlies);
   if (strictParsed.parsedLine) {
-    return { ...strictParsed, thinkingText: null };
+    const san = currentFen ? uciLineToSan(strictParsed.parsedLine, currentFen) : null;
+    return { ...strictParsed, sanLine: san, thinkingText: null };
   }
 
-  // Best-effort fallback parser for models that include extra text.
-  const looseTokens = (text.toLowerCase().match(/[a-h][1-8][a-h][1-8][qrbn]?/g) ??
-    []).slice(0, requiredPlies);
+  // Step 2: Loose UCI extraction — look for exactly requiredPlies UCI tokens
+  const looseTokens = (cleaned.toLowerCase().match(/[a-h][1-8][a-h][1-8][qrbn]?/g) ?? []);
   if (looseTokens.length === requiredPlies && looseTokens.every(isUciMove)) {
+    const uciLine = looseTokens.join(" ");
+    const san = currentFen ? uciLineToSan(uciLine, currentFen) : null;
     return {
-      parsedLine: looseTokens.join(" "),
+      parsedLine: uciLine,
+      sanLine: san,
       parseStatus: `loose_${strictParsed.parseStatus}`,
       formatValid: false,
       thinkingText: null,
     };
   }
 
-  return { ...strictParsed, thinkingText: null };
+  // Step 3: SAN-to-UCI conversion using chess.js and the board position
+  if (currentFen) {
+    const sanResult = tryParseSanWithChess(cleaned, currentFen, requiredPlies);
+    if (sanResult) {
+      return {
+        parsedLine: sanResult.uci,
+        sanLine: sanResult.san,
+        parseStatus: "san_converted",
+        formatValid: false,
+        thinkingText: null,
+      };
+    }
+  }
+
+  return { ...strictParsed, sanLine: null, thinkingText: null };
 }
 
 function extractMessageText(messageContent) {
@@ -210,9 +229,27 @@ function extractMessageText(messageContent) {
   return pieces.join("\n").trim();
 }
 
+function extractReasoningFromDetails(details) {
+  if (!Array.isArray(details) || details.length === 0) return null;
+  const parts = [];
+  for (const item of details) {
+    if (!item || typeof item !== "object") continue;
+    if (item.type === "reasoning.text" && typeof item.text === "string") {
+      parts.push(item.text);
+    } else if (item.type === "reasoning.summary" && typeof item.summary === "string") {
+      parts.push(item.summary);
+    }
+  }
+  return parts.length > 0 ? parts.join("\n").trim() : null;
+}
+
 function extractApiReasoning(choice) {
+  const detailsText = extractReasoningFromDetails(choice?.message?.reasoning_details);
+  if (detailsText) return detailsText;
+
   const reasoningCandidates = [
     choice?.message?.reasoning,
+    choice?.message?.reasoning_content,
     choice?.message?.analysis,
     choice?.reasoning,
   ];
@@ -234,14 +271,6 @@ function extractApiReasoning(choice) {
     }
   }
   return null;
-}
-
-function applyTemplate(template, values) {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => {
-    if (!Object.prototype.hasOwnProperty.call(values, key)) return "";
-    const value = values[key];
-    return value == null ? "" : String(value);
-  });
 }
 
 function hashShort(input) {
@@ -291,6 +320,34 @@ function parseFenBoard(boardPart) {
     file += 1;
   }
   return pieces;
+}
+
+function pieceToChar(piece) {
+  const char = ({
+    pawn: "p",
+    knight: "n",
+    bishop: "b",
+    rook: "r",
+    queen: "q",
+    king: "k",
+  })[piece.role] ?? "?";
+  return piece.color === "white" ? char.toUpperCase() : char;
+}
+
+function renderAsciiBoard(fen) {
+  const boardPart = fen.trim().split(/\s+/)[0] ?? "";
+  const pieces = parseFenBoard(boardPart);
+  const lines = [];
+  for (let rank = 8; rank >= 1; rank -= 1) {
+    const cells = [];
+    for (let file = 0; file < 8; file += 1) {
+      const piece = pieces.get(square(file, rank));
+      cells.push(piece ? pieceToChar(piece) : ".");
+    }
+    lines.push(`${rank} ${cells.join(" ")}`);
+  }
+  lines.push("  a b c d e f g h");
+  return lines.join("\n");
 }
 
 function serializeFenBoard(pieces) {
@@ -415,47 +472,74 @@ function applyUciToFen(fen, move) {
   return `${serializeFenBoard(pieces)} ${nextTurn} ${denormalizeCastling(castling)} ${enPassant} ${halfmove} ${fullmove}`;
 }
 
+function applyUciWithChessJs(fen, uciMove) {
+  try {
+    const chess = new Chess(fen);
+    const from = uciMove.slice(0, 2);
+    const to = uciMove.slice(2, 4);
+    const promotion = uciMove[4] ?? undefined;
+    chess.move({ from, to, promotion });
+    return chess.fen();
+  } catch {
+    return null;
+  }
+}
+
 function getPromptContext(puzzle) {
   const sourceFen = puzzle.fen;
-  const currentFen = applyUciToFen(sourceFen, puzzle.initialMove) ?? sourceFen;
+  const currentFen =
+    applyUciWithChessJs(sourceFen, puzzle.initialMove) ??
+    applyUciToFen(sourceFen, puzzle.initialMove) ??
+    sourceFen;
   const sideToMove = currentFen.split(/\s+/)[1] === "b" ? "Black" : "White";
+  const boardAscii = renderAsciiBoard(currentFen);
   return {
     sourceFen,
     currentFen,
     sideToMove,
+    boardAscii,
   };
 }
 
-async function readPromptFiles(mode) {
-  const profile = PROMPT_PROFILE[mode];
-  assert(profile, `Unknown BENCH_PROMPT_MODE: ${mode}`);
-  const [systemPrompt, userTemplate] = await Promise.all([
-    readFile(path.join(PROMPTS_DIR, profile.systemFile), "utf8"),
-    readFile(path.join(PROMPTS_DIR, profile.userFile), "utf8"),
-  ]);
-  return { ...profile, systemPrompt: systemPrompt.trim(), userTemplate: userTemplate.trim() };
+function formatTrackLabel(track) {
+  if (track === "mateIn1" || track === "mate1") return "Mate in 1";
+  if (track === "mateIn2" || track === "mate2") return "Mate in 2";
+  if (track === "hangingPiece") return "Hanging Piece";
+  return String(track)
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[-_]/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function createUserPrompt(template, puzzle) {
+function getTaskDescription(track, requiredPlies) {
+  if (track === "mateIn1" || track === "mate1") {
+    return "Find the move that gives checkmate immediately.";
+  }
+  if (track === "mateIn2" || track === "mate2") {
+    return "Find the forced mate in 2 from the current position.";
+  }
+  return `Find the best continuation line of exactly ${requiredPlies} plies from the current position.`;
+}
+
+function createUserPrompt(puzzle) {
   const context = getPromptContext(puzzle);
-  return applyTemplate(template, {
+  return buildUserPrompt({
     puzzleId: puzzle.puzzleId,
-    track: puzzle.track,
+    trackLabel: formatTrackLabel(puzzle.track),
     ratingBucket: puzzle.ratingBucket,
     rating: puzzle.rating,
-    fen: puzzle.fen,
-    sourceFen: context.sourceFen,
     currentFen: context.currentFen,
     sideToMove: context.sideToMove,
-    initialMove: puzzle.initialMove,
+    boardAscii: context.boardAscii,
     requiredPlies: puzzle.requiredPlies,
+    taskDescription: getTaskDescription(puzzle.track, puzzle.requiredPlies),
   });
 }
 
 async function fetchModelMetadata() {
   const url = `${OPENROUTER_BASE_URL}/models`;
   const headers = { Accept: "application/json" };
-  if (OPENROUTER_API_KEY) headers.Authorization = `Bearer ${OPENROUTER_API_KEY}`;
+  if (openrouterApiKey) headers.Authorization = `Bearer ${openrouterApiKey}`;
   const res = await fetch(url, { headers });
   if (!res.ok) {
     throw new Error(`Unable to fetch model metadata (${res.status} ${res.statusText})`);
@@ -465,52 +549,59 @@ async function fetchModelMetadata() {
   return rows;
 }
 
-async function validateSupportedParameters(modelId) {
-  if (!VALIDATE_SUPPORTED_PARAMS) return;
+async function loadSupportedParameters(modelId) {
   try {
     const models = await fetchModelMetadata();
     const row = models.find((m) => m?.id === modelId);
     if (!row) {
       console.warn(`Warning: model "${modelId}" not found in /models; skipping parameter validation.`);
-      return;
+      return new Set();
     }
 
     const supported = new Set(Array.isArray(row.supported_parameters) ? row.supported_parameters : []);
-    const expected = ["temperature", "max_tokens"];
+    const expected = ["max_tokens"];
     const missing = expected.filter((param) => !supported.has(param));
     if (missing.length > 0) {
       console.warn(
         `Warning: model "${modelId}" does not list support for [${missing.join(", ")}]. Benchmark may be inconsistent.`
       );
     }
+    return supported;
   } catch (error) {
     console.warn(
-      `Warning: supported parameter validation failed (${error instanceof Error ? error.message : String(error)}). Continuing.`
+      `Warning: supported parameter lookup failed (${error instanceof Error ? error.message : String(error)}). Continuing without temperature.`
     );
+    return new Set();
   }
 }
 
 function buildCompletionBody({ modelId, systemPrompt, userPrompt }) {
-  return {
+  const body = {
     model: modelId,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ],
-    temperature: TEMPERATURE,
-    max_tokens: MAX_TOKENS,
+    max_tokens: useReasoning ? MAX_TOKENS_REASONING : MAX_TOKENS,
     provider: {
       allow_fallbacks: false,
-      require_parameters: true,
+      ...(benchConfig.providerOrder ? { order: benchConfig.providerOrder } : {}),
     },
   };
+  if (modelSupportedParams.has("temperature")) {
+    body.temperature = 0;
+  }
+  if (useReasoning) {
+    body.reasoning = { effort: REASONING_EFFORT };
+  }
+  return body;
 }
 
 async function postCompletion(body) {
   const url = `${OPENROUTER_BASE_URL}/chat/completions`;
   const headers = {
     "Content-Type": "application/json",
-    Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+    Authorization: `Bearer ${openrouterApiKey}`,
   };
 
   for (let attempt = 0; attempt <= RETRIES; attempt += 1) {
@@ -548,14 +639,30 @@ function extractUsage(resp) {
     0
   );
   const totalTokens = toInt(usage.total_tokens, promptTokens + completionTokens);
+  // usage.cost is 0 when using BYOK — real cost is fetched via /api/v1/generation
   const cost = toNumber(usage.cost, 0);
   return { promptTokens, completionTokens, reasoningTokens, totalTokens, cost };
+}
+
+async function fetchGenerationCost(generationId: string): Promise<number> {
+  try {
+    const res = await fetch(
+      `${OPENROUTER_BASE_URL}/generation?id=${generationId}`,
+      { headers: { Authorization: `Bearer ${openrouterApiKey}` } }
+    );
+    if (!res.ok) return 0;
+    const json = await res.json();
+    return toNumber(json?.data?.total_cost, 0);
+  } catch {
+    return 0;
+  }
 }
 
 function summarizeAttempts(attempts) {
   const total = attempts.length;
   const parsed = attempts.filter((a) => a.parsedLine).length;
   const correctStrict = attempts.filter((a) => a.correctStrict).length;
+  const sanConverted = attempts.filter((a) => a.parseStatus === "san_converted").length;
   const totalPromptTokens = attempts.reduce((sum, a) => sum + a.usage.promptTokens, 0);
   const totalCompletionTokens = attempts.reduce((sum, a) => sum + a.usage.completionTokens, 0);
   const totalReasoningTokens = attempts.reduce((sum, a) => sum + a.usage.reasoningTokens, 0);
@@ -565,8 +672,10 @@ function summarizeAttempts(attempts) {
   return {
     total,
     parsed,
+    sanConverted,
     correctStrict,
     accuracyStrict: total === 0 ? 0 : correctStrict / total,
+    accuracyParsed: parsed === 0 ? 0 : correctStrict / parsed,
     totalPromptTokens,
     totalCompletionTokens,
     totalReasoningTokens,
@@ -575,80 +684,36 @@ function summarizeAttempts(attempts) {
   };
 }
 
-async function main() {
-  if (!DRY_RUN) {
-    assert(OPENROUTER_API_KEY, "Missing OPENROUTER_API_KEY.");
-    assert(MODEL_ID, "Missing BENCH_MODEL_ID.");
-  }
-  assert(PROMPT_PROFILE[PROMPT_MODE], `Unsupported BENCH_PROMPT_MODE: ${PROMPT_MODE}`);
-  assert(Number.isFinite(TEMPERATURE), "BENCH_TEMPERATURE must be numeric.");
-  assert(Number.isFinite(MAX_TOKENS) && MAX_TOKENS > 0, "BENCH_MAX_TOKENS must be > 0.");
-  const modelId = MODEL_ID || "dry-run/model";
-  const modelDisplayName = displayModelName(modelId);
+function solvePuzzle(puzzle, index, total) {
+  const promptContext = getPromptContext(puzzle);
+  const expectedLine = normalizeLine(puzzle.expectedLine ?? "");
+  const expectedSanLine = uciLineToSan(expectedLine, promptContext.currentFen);
+  const userPrompt = createUserPrompt(puzzle);
+  const body = buildCompletionBody({
+    modelId,
+    systemPrompt: SYSTEM_PROMPT,
+    userPrompt,
+  });
 
-  const promptProfile = await readPromptFiles(PROMPT_MODE);
-  if (!DRY_RUN) {
-    await validateSupportedParameters(modelId);
-  }
-
-  const datasetRaw = await readFile(DATASET_PATH, "utf8");
-  const dataset = JSON.parse(datasetRaw);
-  const puzzlesAll = Array.isArray(dataset?.puzzles) ? dataset.puzzles : [];
-  assert(puzzlesAll.length > 0, `Dataset has no puzzles: ${DATASET_PATH}`);
-  const puzzles = LIMIT ? puzzlesAll.slice(0, LIMIT) : puzzlesAll;
-
-  const runStart = Date.now();
-  const attempts = [];
-  console.log(
-    `Running ${puzzles.length} puzzle(s) with model=${modelDisplayName}, mode=${PROMPT_MODE}, prompt=${promptProfile.version}${DRY_RUN ? " [DRY RUN]" : ""}`
-  );
-
-  for (let i = 0; i < puzzles.length; i += 1) {
-    const puzzle = puzzles[i];
-    const promptContext = getPromptContext(puzzle);
-    const expectedLine = normalizeLine(puzzle.expectedLine ?? "");
-    const userPrompt = createUserPrompt(promptProfile.userTemplate, puzzle);
-    const body = buildCompletionBody({
-      modelId,
-      systemPrompt: promptProfile.systemPrompt,
-      userPrompt,
-    });
-
+  return async () => {
     const started = Date.now();
     try {
-      let rawOutput = "";
-      let apiReasoning = null;
-      let usage = {
-        promptTokens: 0,
-        completionTokens: 0,
-        reasoningTokens: 0,
-        totalTokens: 0,
-        cost: 0,
-      };
-      let providerResponse = null;
-      if (DRY_RUN) {
-        rawOutput =
-          PROMPT_MODE === "showcase"
-            ? `LINE: ${expectedLine}\nTHINKING:\n- Dry run output\n- Replace with real model run`
-            : expectedLine;
-      } else {
-        const response = await postCompletion(body);
-        providerResponse = response;
-        const choice = response?.choices?.[0] ?? null;
-        rawOutput = extractMessageText(choice?.message?.content);
-        apiReasoning = extractApiReasoning(choice);
-        usage = extractUsage(response);
-      }
+      const response = await postCompletion(body);
+      const choice = response?.choices?.[0] ?? null;
+      const rawOutput = extractMessageText(choice?.message?.content);
+      const apiReasoning = extractApiReasoning(choice);
+      const usage = extractUsage(response);
       const latencyMs = Date.now() - started;
-      const parsed =
-        PROMPT_MODE === "showcase"
-          ? parseShowcaseOutput(rawOutput, puzzle.requiredPlies)
-          : parseBenchmarkOutput(rawOutput, puzzle.requiredPlies);
+      // Fetch real cost from OpenRouter generation endpoint (needed for BYOK where usage.cost = 0)
+      if (usage.cost === 0 && response?.id) {
+        usage.cost = await fetchGenerationCost(response.id);
+      }
+      const parsed = parseBenchmarkOutput(rawOutput, puzzle.requiredPlies, promptContext.currentFen);
       const parsedLine = parsed.parsedLine;
       const correctStrict = parsedLine ? normalizeLine(parsedLine) === expectedLine : false;
 
-      attempts.push({
-        index: i,
+      const result = {
+        index,
         puzzleId: puzzle.puzzleId,
         track: puzzle.track,
         ratingBucket: puzzle.ratingBucket,
@@ -657,8 +722,10 @@ async function main() {
         currentFen: promptContext.currentFen,
         sideToMove: promptContext.sideToMove,
         expectedLine,
+        expectedSanLine,
         rawOutput,
         parsedLine,
+        sanLine: parsed.sanLine ?? null,
         parseStatus: parsed.parseStatus,
         formatValid: parsed.formatValid,
         correctStrict,
@@ -666,16 +733,17 @@ async function main() {
         latencyMs,
         usage,
         responseError: null,
-        ...(STORE_RAW_RESPONSE && providerResponse ? { providerResponse } : {}),
-      });
+        ...(STORE_RAW_RESPONSE ? { providerResponse: response } : {}),
+      };
       console.log(
-        `[${i + 1}/${puzzles.length}] ${puzzle.puzzleId} ${puzzle.track} ${puzzle.ratingBucket} -> ${correctStrict ? "OK" : "MISS"}`
+        `[${index + 1}/${total}] ${puzzle.puzzleId} ${puzzle.track} ${puzzle.ratingBucket} -> ${correctStrict ? "OK" : "MISS"}`
       );
+      return result;
     } catch (error) {
       const latencyMs = Date.now() - started;
       const message = error instanceof Error ? error.message : String(error);
-      attempts.push({
-        index: i,
+      const result = {
+        index,
         puzzleId: puzzle.puzzleId,
         track: puzzle.track,
         ratingBucket: puzzle.ratingBucket,
@@ -699,36 +767,78 @@ async function main() {
           cost: 0,
         },
         responseError: { message },
-      });
-      console.error(`[${i + 1}/${puzzles.length}] ${puzzle.puzzleId} failed: ${message}`);
+      };
+      console.error(`[${index + 1}/${total}] ${puzzle.puzzleId} failed: ${message}`);
+      return result;
+    }
+  };
+}
+
+async function runPool(tasks, concurrency) {
+  const results = new Array(tasks.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < tasks.length) {
+      const i = nextIndex;
+      nextIndex += 1;
+      results[i] = await tasks[i]();
     }
   }
 
+  const workers = Array.from({ length: Math.min(concurrency, tasks.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+async function main() {
+  assert(openrouterApiKey, "Missing OPENROUTER_API_KEY.");
+  assert(modelId, "Missing BENCH_MODEL_ID.");
+  assert(Number.isFinite(MAX_TOKENS) && MAX_TOKENS > 0, "MAX_TOKENS must be > 0.");
+  const modelDisplayName = displayModelName(modelId);
+
+  modelSupportedParams = await loadSupportedParameters(modelId);
+
+  const useTemp = modelSupportedParams.has("temperature");
+  useReasoning = modelSupportedParams.has("reasoning");
+
+  console.log(`Temperature: ${useTemp ? "0 (supported)" : "not set (unsupported)"}`);
+  console.log(`Reasoning: ${useReasoning ? `effort="${REASONING_EFFORT}", max_tokens=${MAX_TOKENS_REASONING}` : "not supported by model"}`);
+
+  const datasetRaw = await readFile(DATASET_PATH, "utf8");
+  const dataset = JSON.parse(datasetRaw);
+  const puzzlesAll = Array.isArray(dataset?.puzzles) ? dataset.puzzles : [];
+  assert(puzzlesAll.length > 0, `Dataset has no puzzles: ${DATASET_PATH}`);
+  const puzzles = puzzlesAll;
+
+  const runStart = Date.now();
+  console.log(`Running ${puzzles.length} puzzle(s) with model=${modelDisplayName} concurrency=${CONCURRENCY}`);
+
+  const tasks = puzzles.map((puzzle, i) => solvePuzzle(puzzle, i, puzzles.length));
+  const attempts = await runPool(tasks, CONCURRENCY);
+
   const summary = summarizeAttempts(attempts);
   const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${hashShort(
-    `${modelId}|${dataset.datasetId}|${promptProfile.version}|${runStart}`
+    `${modelId}|${dataset.datasetId}|${runStart}`
   )}`;
   const provider = "openrouter";
   const result = {
-    schemaVersion: "benchmark-run.v1",
+    schema: "benchmark-run",
     runId,
     createdAt: new Date().toISOString(),
     datasetId: dataset.datasetId ?? "unknown",
     modelId,
     modelName: modelDisplayName,
-    benchmarkLabel: BENCHMARK_LABEL || null,
+    benchmarkLabel: null,
     provider,
-    promptMode: PROMPT_MODE,
-    promptVersion: promptProfile.version,
-    promptFiles: {
-      system: path.relative(process.cwd(), path.join(PROMPTS_DIR, promptProfile.systemFile)),
-      user: path.relative(process.cwd(), path.join(PROMPTS_DIR, promptProfile.userFile)),
-    },
+    promptFile: path.relative(process.cwd(), path.resolve(process.cwd(), "src/bench/prompt.ts")),
     config: {
-      temperature: TEMPERATURE,
-      maxTokens: MAX_TOKENS,
+      temperature: useTemp ? 0 : null,
+      maxTokens: useReasoning ? MAX_TOKENS_REASONING : MAX_TOKENS,
+      reasoning: useReasoning ? { effort: REASONING_EFFORT } : null,
       retries: RETRIES,
-      limit: LIMIT,
+      concurrency: CONCURRENCY,
+      limit: null,
       datasetPath: path.relative(process.cwd(), DATASET_PATH),
     },
     summary,
@@ -739,7 +849,7 @@ async function main() {
   await mkdir(modelResultsDir, { recursive: true });
   const outputFile = path.join(
     modelResultsDir,
-    `${runId}.${PROMPT_MODE}.json`
+    `${runId}.benchmark.json`
   );
   await writeFile(outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
 
@@ -749,12 +859,28 @@ async function main() {
     `Accuracy(strict): ${(summary.accuracyStrict * 100).toFixed(2)}% (${summary.correctStrict}/${summary.total})`
   );
   console.log(
+    `Accuracy(parsed): ${(summary.accuracyParsed * 100).toFixed(2)}% (${summary.correctStrict}/${summary.parsed} parsed)`
+  );
+  console.log(
+    `Parse rate: ${((summary.parsed / summary.total) * 100).toFixed(1)}% — SAN converted: ${summary.sanConverted}, unparsed: ${summary.total - summary.parsed}`
+  );
+  console.log(
     `Tokens prompt/completion/reasoning: ${summary.totalPromptTokens}/${summary.totalCompletionTokens}/${summary.totalReasoningTokens}`
   );
   console.log(`Total cost: ${summary.totalCost.toFixed(6)}`);
 }
 
-main().catch((error) => {
+async function bootstrap() {
+  loadBenchEnv();
+  openrouterApiKey = envString("OPENROUTER_API_KEY");
+  // config.ts takes priority; env vars are a fallback for CI / scripting
+  modelId = benchConfig.modelId || envString("BENCH_MODEL_ID");
+  modelName = benchConfig.modelName || envTrimmed("BENCH_MODEL_NAME");
+  console.log(`Model: ${modelId} (${modelName})`);
+  await main();
+}
+
+bootstrap().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 });

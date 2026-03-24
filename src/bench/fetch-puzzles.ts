@@ -1,23 +1,20 @@
 #!/usr/bin/env node
+// @ts-nocheck
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, existsSync, statSync } from "node:fs";
 import { writeFile, rename } from "node:fs/promises";
 import path from "node:path";
-import process from "node:process";
 import readline from "node:readline";
 
-const SOURCE_URL =
-  process.env.BENCH_LICHESS_PUZZLE_URL ??
-  "https://database.lichess.org/lichess_db_puzzle.csv.zst";
+const SOURCE_URL = "https://database.lichess.org/lichess_db_puzzle.csv.zst";
 const OUTPUT_DIR = path.resolve(process.cwd(), "src/bench/data");
-const CACHE_DIR = path.join(OUTPUT_DIR, ".cache");
-const ZST_PATH = path.join(CACHE_DIR, "lichess_db_puzzle.csv.zst");
-const OUTPUT_PATH = path.join(OUTPUT_DIR, "puzzles.v1.json");
-const TARGET_PER_STRATUM = Number(process.env.BENCH_PUZZLES_PER_STRATUM ?? 10);
-const FORCE_FETCH = process.env.BENCH_FORCE_FETCH === "1";
-const SEED_INPUT = process.env.BENCH_SEED ?? "20260322";
+const CACHE_DIR = path.resolve(process.cwd(), "src/bench/data/.cache");
+const ZST_PATH = path.resolve(process.cwd(), "src/bench/data/.cache/lichess_db_puzzle.csv.zst");
+const OUTPUT_PATH = path.resolve(process.cwd(), "src/bench/data/puzzles.json");
+const TARGET_PER_STRATUM = 10;
+const SEED_INPUT = "20260322";
 
 const TRACKS = [
   { id: "mateIn1", theme: "mateIn1" },
@@ -128,7 +125,7 @@ async function ensureToolAvailable(bin) {
 
 async function downloadPuzzleDump() {
   mkdirSync(CACHE_DIR, { recursive: true });
-  if (existsSync(ZST_PATH) && !FORCE_FETCH) {
+  if (existsSync(ZST_PATH)) {
     const existingBytes = statSync(ZST_PATH).size;
     console.log(
       `Using cached dump ${path.relative(process.cwd(), ZST_PATH)} (${existingBytes.toLocaleString()} bytes).`
@@ -396,7 +393,7 @@ function buildManifest(strata) {
   const datasetHash = createHash("sha256").update(signature).digest("hex").slice(0, 12);
 
   return {
-    datasetId: `lichess-v1-${datasetHash}`,
+    datasetId: `lichess-${datasetHash}`,
     generatedAt: new Date().toISOString(),
     source: {
       url: SOURCE_URL,
@@ -423,7 +420,7 @@ function buildManifest(strata) {
 }
 
 async function main() {
-  assertPositiveInt("BENCH_PUZZLES_PER_STRATUM", TARGET_PER_STRATUM);
+  assertPositiveInt("TARGET_PER_STRATUM", TARGET_PER_STRATUM);
   mkdirSync(OUTPUT_DIR, { recursive: true });
 
   await ensureToolAvailable("curl");

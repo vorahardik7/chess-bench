@@ -19,7 +19,9 @@ export type PuzzleAttemptView = {
   puzzleId: string;
   track: TrackId;
   expectedLine: string;
+  expectedSanLine: string | null;
   parsedLine: string | null;
+  sanLine: string | null;
   rawOutput: string;
   thinkingText: string | null;
   parseStatus: string;
