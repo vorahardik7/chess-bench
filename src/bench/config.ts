@@ -19,9 +19,9 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "google/gemini-3.1-pro-preview",
-  modelName: "Gemini 3.1 Pro Preview",
-  providerOrder: ["Google AI Studio"],
+  modelId: "x-ai/grok-4.1-fast",
+  modelName: "Grok 4.1 Fast",
+  providerOrder: ["xai"],
 };
 
 export default config;
