@@ -1,90 +1,67 @@
 # chess-bench
 
-`chess-bench` is a small project for testing how well language models solve short Lichess puzzles.
+`chess-bench` benchmarks LLMs on short Lichess tactics using a fixed dataset.
 
-The benchmark focuses on simple tactical puzzles like:
-
+Tracks:
 - mate in 1
 - mate in 2
 - fork
 - pin
 - hanging piece
 
-The idea is simple:
-
-1. fetch a fixed set of puzzles from the Lichess puzzle dump
-2. run one model against that set
-3. save the answers, tokens, cost, and accuracy
-4. view the results in the app
-
-## What It Does
-
-This project gives each model the same puzzle set and checks whether the model's final UCI move line matches the expected Lichess answer.
-
-It also stores:
-
-- raw model output
-- parsed move line
-- prompt tokens
-- completion tokens
-- reasoning tokens if the provider returns them
-- cost
-- latency
-
-## Fetch Puzzles
-
-Fetch the benchmark puzzle set once with:
+## Quick Start
 
 ```bash
+pnpm install
 pnpm run bench:fetch-puzzles
 ```
 
-This builds the local puzzle file used by the benchmark.
+Set your model in `src/bench/config.ts`:
 
-## Run A Benchmark
-
-To run one model, you only need:
-
-- `OPENROUTER_API_KEY`
-- `BENCH_MODEL_ID`
-
-Example:
-
-```bash
-OPENROUTER_API_KEY=your_key_here \
-BENCH_MODEL_ID="google/gemini-2.5-flash" \
-pnpm run bench:run
+```ts
+const config = {
+  modelId: "anthropic/claude-sonnet-4.6",
+  modelName: "Claude Sonnet 4.6",
+  providerOrder: ["Anthropic"],
+};
 ```
 
-If you want a cleaner display name in the UI, you can also set:
+Then run:
 
 ```bash
-OPENROUTER_API_KEY=your_key_here \
-BENCH_MODEL_ID="google/gemini-2.5-flash" \
-BENCH_MODEL_NAME="Gemini 2.5 Flash" \
-pnpm run bench:run
+OPENROUTER_API_KEY=your_key_here pnpm run bench:run
 ```
 
-## View Results
-
-Start the app with:
+Start the UI:
 
 ```bash
 pnpm dev
 ```
 
-Then open:
-
+Open:
 - `http://localhost:3000/puzzle`
 - `http://localhost:3000/benchmark`
 
-The puzzle page shows individual puzzle responses.
+## How Scoring Works
 
-The benchmark page shows the leaderboard, per-track scores, cost, and tokens.
+- Prompt asks for final answer as UCI move line.
+- `Accuracy(strict)` = exact expected UCI line match across all puzzles.
+- `Accuracy(parsed)` = exact match only among parsed outputs.
+- `Parse rate` = parseable outputs / total outputs.
+- Parser can recover:
+  - strict UCI
+  - loose UCI extraction
+  - SAN -> UCI conversion
 
-## Notes
+Notes:
+- If model supports reasoning, benchmark enables it automatically.
+- If a response has no valid final move line, benchmark does one short repair call asking for move-only output.
+- Interrupted runs auto-resume from an in-progress checkpoint for the same model + dataset.
 
-- Results are saved under `src/bench/results/`
-- The fetched raw puzzle dump is not committed
-- The prompt lives in `src/bench/prompt.ts`
-- The benchmark is meant for short puzzles, not long chess analysis
+## Outputs
+
+- Dataset: `src/bench/data/puzzles.json`
+- Runs: `src/bench/results/<model>/...benchmark.json`
+- Prompt template: `src/bench/prompt.ts`
+
+`BENCH_MODEL_ID` and `BENCH_MODEL_NAME` env vars can still be used as fallback/override for scripting.

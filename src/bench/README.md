@@ -1,28 +1,26 @@
 # Bench Scripts
 
-## Dataset
-
-Generate fixed puzzle dataset:
+## Build Dataset
 
 ```bash
 pnpm run bench:fetch-puzzles
 ```
 
-This writes:
+Writes `src/bench/data/puzzles.json`.
 
-- `src/bench/data/puzzles.json`
+## Run Benchmark
 
-## Run Benchmark (strict scoring)
+1. Pick model in `src/bench/config.ts`
+2. Run:
 
 ```bash
-OPENROUTER_API_KEY=... \
-BENCH_MODEL_ID="openai/gpt-5.4-mini" \
-BENCH_MODEL_NAME="GPT-5.4 Mini" \
-pnpm run bench:run
+OPENROUTER_API_KEY=... pnpm run bench:run
 ```
 
-Optional vars:
+Env fallback/override (optional):
+- `BENCH_MODEL_ID`
+- `BENCH_MODEL_NAME`
 
-- `BENCH_MODEL_NAME="Gemini 3 Flash"`
+Interrupted runs auto-resume on the next `bench:run` for the same model + dataset.
 
 Results are written to `src/bench/results/`.

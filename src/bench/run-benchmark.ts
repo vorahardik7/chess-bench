@@ -3,7 +3,7 @@
 // @ts-nocheck
 
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Chess } from "chess.js";
 import { envString, envTrimmed, loadBenchEnv } from "./env";
@@ -21,6 +21,7 @@ const RETRIES = 4;
 const RETRY_BASE_MS = 1200;
 const STORE_RAW_RESPONSE = false;
 const CONCURRENCY = 5;
+const IN_PROGRESS_SUFFIX = ".in-progress.tmp";
 
 let openrouterApiKey = "";
 let modelId = "";
@@ -50,6 +51,10 @@ function delay(ms) {
 
 function sanitizeModelId(modelId) {
   return modelId.replace(/[^a-zA-Z0-9._-]+/g, "__");
+}
+
+function inProgressPath(modelResultsDir, datasetId) {
+  return path.join(modelResultsDir, `${sanitizeModelId(datasetId || "unknown")}${IN_PROGRESS_SUFFIX}`);
 }
 
 function displayModelName(modelId) {
@@ -710,6 +715,37 @@ function summarizeAttempts(attempts) {
   };
 }
 
+function sortAttemptsByIndex(attempts) {
+  return [...attempts].sort((a, b) => toInt(a?.index, 0) - toInt(b?.index, 0));
+}
+
+function dedupeAttemptsByPuzzle(attempts) {
+  const byPuzzleId = new Map();
+  for (const attempt of attempts) {
+    const puzzleId = attempt?.puzzleId;
+    if (!puzzleId) continue;
+    byPuzzleId.set(puzzleId, attempt);
+  }
+  return sortAttemptsByIndex(Array.from(byPuzzleId.values()));
+}
+
+async function readInProgressCheckpoint(filePath, { modelId, datasetId }) {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    if (parsed.modelId !== modelId || parsed.datasetId !== datasetId) return null;
+    const attempts = Array.isArray(parsed.attempts) ? parsed.attempts : [];
+    return {
+      runId: typeof parsed.runId === "string" ? parsed.runId : null,
+      createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : null,
+      attempts,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function solvePuzzle(puzzle, index, total) {
   const promptContext = getPromptContext(puzzle);
   const expectedLine = normalizeLine(puzzle.expectedLine ?? "");
@@ -845,7 +881,7 @@ function solvePuzzle(puzzle, index, total) {
   };
 }
 
-async function runPool(tasks, concurrency) {
+async function runPool(tasks, concurrency, onTaskCompleted = null) {
   const results = new Array(tasks.length);
   let nextIndex = 0;
 
@@ -854,6 +890,9 @@ async function runPool(tasks, concurrency) {
       const i = nextIndex;
       nextIndex += 1;
       results[i] = await tasks[i]();
+      if (onTaskCompleted) {
+        await onTaskCompleted(results[i], i);
+      }
     }
   }
 
@@ -878,26 +917,101 @@ async function main() {
 
   const datasetRaw = await readFile(DATASET_PATH, "utf8");
   const dataset = JSON.parse(datasetRaw);
+  const datasetId = dataset.datasetId ?? "unknown";
   const puzzlesAll = Array.isArray(dataset?.puzzles) ? dataset.puzzles : [];
   assert(puzzlesAll.length > 0, `Dataset has no puzzles: ${DATASET_PATH}`);
   const puzzles = puzzlesAll;
 
+  const modelResultsDir = path.join(RESULTS_DIR, sanitizeModelId(modelId));
+  await mkdir(modelResultsDir, { recursive: true });
+  const checkpointFile = inProgressPath(modelResultsDir, datasetId);
+  const checkpoint = await readInProgressCheckpoint(checkpointFile, { modelId, datasetId });
+
+  const knownPuzzleIds = new Set(puzzles.map((p) => p.puzzleId));
+  const resumedAttempts = dedupeAttemptsByPuzzle(
+    (checkpoint?.attempts ?? []).filter((attempt) => knownPuzzleIds.has(attempt?.puzzleId))
+  );
+  const completedPuzzleIds = new Set(resumedAttempts.map((attempt) => attempt.puzzleId));
+  const remaining = [];
+  for (let i = 0; i < puzzles.length; i += 1) {
+    const puzzle = puzzles[i];
+    if (completedPuzzleIds.has(puzzle.puzzleId)) continue;
+    remaining.push({ puzzle, index: i });
+  }
+
   const runStart = Date.now();
+  const runId =
+    checkpoint?.runId ??
+    `${new Date().toISOString().replace(/[:.]/g, "-")}-${hashShort(
+      `${modelId}|${datasetId}|${runStart}`
+    )}`;
+  const runCreatedAt = checkpoint?.createdAt ?? new Date().toISOString();
+  const provider = "openrouter";
+
+  if (resumedAttempts.length > 0) {
+    console.log(
+      `Resuming checkpoint: ${resumedAttempts.length}/${puzzles.length} already complete; ${remaining.length} remaining.`
+    );
+  }
   console.log(`Running ${puzzles.length} puzzle(s) with model=${modelDisplayName} concurrency=${CONCURRENCY}`);
 
-  const tasks = puzzles.map((puzzle, i) => solvePuzzle(puzzle, i, puzzles.length));
-  const attempts = await runPool(tasks, CONCURRENCY);
+  const attemptsByPuzzleId = new Map(resumedAttempts.map((attempt) => [attempt.puzzleId, attempt]));
+  let checkpointWriteChain = Promise.resolve();
+  const writeCheckpoint = () => {
+    const attempts = sortAttemptsByIndex(Array.from(attemptsByPuzzleId.values()));
+    const payload = {
+      schema: "benchmark-run",
+      status: "in_progress",
+      runId,
+      createdAt: runCreatedAt,
+      datasetId,
+      modelId,
+      modelName: modelDisplayName,
+      provider,
+      promptFile: path.relative(process.cwd(), path.resolve(process.cwd(), "src/bench/prompt.ts")),
+      config: {
+        temperature: useTemp ? 0 : null,
+        maxTokens: useReasoning ? MAX_TOKENS_REASONING : MAX_TOKENS,
+        reasoning: useReasoning ? { effort: REASONING_EFFORT } : null,
+        retries: RETRIES,
+        concurrency: CONCURRENCY,
+        limit: null,
+        datasetPath: path.relative(process.cwd(), DATASET_PATH),
+      },
+      progress: {
+        completed: attempts.length,
+        total: puzzles.length,
+      },
+      summary: summarizeAttempts(attempts),
+      attempts,
+    };
+    checkpointWriteChain = checkpointWriteChain
+      .then(() => writeFile(checkpointFile, `${JSON.stringify(payload, null, 2)}\n`, "utf8"))
+      .catch((error) => {
+        console.warn(
+          `Warning: unable to write checkpoint (${error instanceof Error ? error.message : String(error)}).`
+        );
+      });
+  };
 
-  const summary = summarizeAttempts(attempts);
-  const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${hashShort(
-    `${modelId}|${dataset.datasetId}|${runStart}`
-  )}`;
-  const provider = "openrouter";
+  if (resumedAttempts.length > 0) {
+    writeCheckpoint();
+  }
+  const tasks = remaining.map(({ puzzle, index }) => solvePuzzle(puzzle, index, puzzles.length));
+  await runPool(tasks, CONCURRENCY, async (attempt) => {
+    attemptsByPuzzleId.set(attempt.puzzleId, attempt);
+    writeCheckpoint();
+    await checkpointWriteChain;
+  });
+  await checkpointWriteChain;
+
+  const mergedAttempts = sortAttemptsByIndex(Array.from(attemptsByPuzzleId.values()));
+  const summary = summarizeAttempts(mergedAttempts);
   const result = {
     schema: "benchmark-run",
     runId,
     createdAt: new Date().toISOString(),
-    datasetId: dataset.datasetId ?? "unknown",
+    datasetId,
     modelId,
     modelName: modelDisplayName,
     benchmarkLabel: null,
@@ -913,16 +1027,15 @@ async function main() {
       datasetPath: path.relative(process.cwd(), DATASET_PATH),
     },
     summary,
-    attempts,
+    attempts: mergedAttempts,
   };
 
-  const modelResultsDir = path.join(RESULTS_DIR, sanitizeModelId(modelId));
-  await mkdir(modelResultsDir, { recursive: true });
   const outputFile = path.join(
     modelResultsDir,
     `${runId}.benchmark.json`
   );
   await writeFile(outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+  await unlink(checkpointFile).catch(() => {});
 
   console.log("");
   console.log(`Saved run: ${path.relative(process.cwd(), outputFile)}`);
