@@ -7,7 +7,9 @@ Rules:
 4. Use lowercase UCI notation: each move is the source square followed by the destination square (e.g. e2e4, g1f3, e7e8q for promotion).
 5. Do NOT use algebraic notation (Nf3, Qxe5, O-O, Rxd1+, etc.). Only source-destination pairs.
 6. Separate moves with a single space. No commas, no move numbers, no check/mate symbols.
-7. Do not wrap output in code blocks, markdown, or any formatting.`;
+7. Do not wrap output in code blocks, markdown, or any formatting.
+8. You may think privately, but your final response must contain a move line.
+9. Never return an empty final response.`;
 
 export function buildUserPrompt(input: {
   puzzleId: string;
@@ -40,5 +42,6 @@ ${input.taskDescription}
 Output format:
 exactly ${input.requiredPlies} lowercase UCI move(s) separated by one space.
 Example of UCI notation: e2e4 g8f6 d2d4 (source square + destination square, add q/r/b/n for promotion).
-Do NOT use algebraic/SAN notation like Nf6, Qxe5, O-O, etc.`;
+Do NOT use algebraic/SAN notation like Nf6, Qxe5, O-O, etc.
+Do not leave the final response empty.`;
 }

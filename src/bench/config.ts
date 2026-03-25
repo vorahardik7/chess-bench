@@ -19,9 +19,9 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "anthropic/claude-haiku-4.5",
-  modelName: "Claude Haiku 4.5",
-  providerOrder: ["Anthropic"],
+  modelId: "google/gemini-3.1-pro-preview",
+  modelName: "Gemini 3.1 Pro Preview",
+  providerOrder: ["Google AI Studio"],
 };
 
 export default config;

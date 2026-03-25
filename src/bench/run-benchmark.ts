@@ -16,6 +16,7 @@ const RESULTS_DIR = path.resolve(process.cwd(), "src/bench/results");
 const MAX_TOKENS = 200;
 const MAX_TOKENS_REASONING = 4096;
 const REASONING_EFFORT = "medium";
+const MISSING_OUTPUT_RETRY_ATTEMPTS = 1;
 const RETRIES = 4;
 const RETRY_BASE_MS = 1200;
 const STORE_RAW_RESPONSE = false;
@@ -57,6 +58,15 @@ function displayModelName(modelId) {
 
 function normalizeLine(line) {
   return String(line).trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function buildRepairPrompt(originalUserPrompt, requiredPlies) {
+  return `${originalUserPrompt}
+
+IMPORTANT:
+Your previous response did not include a valid final move line.
+Return ONLY exactly ${requiredPlies} lowercase UCI move(s), separated by one space.
+No analysis. No explanations.`;
 }
 
 function isUciMove(token) {
@@ -644,6 +654,14 @@ function extractUsage(resp) {
   return { promptTokens, completionTokens, reasoningTokens, totalTokens, cost };
 }
 
+function mergeUsageTotals(base, extra) {
+  base.promptTokens += extra.promptTokens;
+  base.completionTokens += extra.completionTokens;
+  base.reasoningTokens += extra.reasoningTokens;
+  base.totalTokens += extra.totalTokens;
+  base.cost += extra.cost;
+}
+
 async function fetchGenerationCost(generationId: string): Promise<number> {
   try {
     const res = await fetch(
@@ -656,6 +674,14 @@ async function fetchGenerationCost(generationId: string): Promise<number> {
   } catch {
     return 0;
   }
+}
+
+async function extractUsageWithCost(response) {
+  const usage = extractUsage(response);
+  if (usage.cost === 0 && response?.id) {
+    usage.cost = await fetchGenerationCost(response.id);
+  }
+  return usage;
 }
 
 function summarizeAttempts(attempts) {
@@ -699,16 +725,61 @@ function solvePuzzle(puzzle, index, total) {
     const started = Date.now();
     try {
       const response = await postCompletion(body);
-      const choice = response?.choices?.[0] ?? null;
-      const rawOutput = extractMessageText(choice?.message?.content);
-      const apiReasoning = extractApiReasoning(choice);
-      const usage = extractUsage(response);
-      const latencyMs = Date.now() - started;
-      // Fetch real cost from OpenRouter generation endpoint (needed for BYOK where usage.cost = 0)
-      if (usage.cost === 0 && response?.id) {
-        usage.cost = await fetchGenerationCost(response.id);
+      let choice = response?.choices?.[0] ?? null;
+      let rawOutput = extractMessageText(choice?.message?.content);
+      let apiReasoning = extractApiReasoning(choice);
+      const usage = await extractUsageWithCost(response);
+      let parsed = parseBenchmarkOutput(rawOutput, puzzle.requiredPlies, promptContext.currentFen);
+
+      for (let repairAttempt = 0; repairAttempt < MISSING_OUTPUT_RETRY_ATTEMPTS; repairAttempt += 1) {
+        if (parsed.parsedLine) break;
+
+        const repairBody = buildCompletionBody({
+          modelId,
+          systemPrompt: SYSTEM_PROMPT,
+          userPrompt: buildRepairPrompt(userPrompt, puzzle.requiredPlies),
+        });
+        // Repair turn should be short and final-answer-only.
+        repairBody.max_tokens = MAX_TOKENS;
+        delete repairBody.reasoning;
+
+        const repairResponse = await postCompletion(repairBody);
+        const repairChoice = repairResponse?.choices?.[0] ?? null;
+        const repairRawOutput = extractMessageText(repairChoice?.message?.content);
+        const repairReasoning = extractApiReasoning(repairChoice);
+        const repairUsage = await extractUsageWithCost(repairResponse);
+        mergeUsageTotals(usage, repairUsage);
+
+        const repairParsed = parseBenchmarkOutput(
+          repairRawOutput,
+          puzzle.requiredPlies,
+          promptContext.currentFen
+        );
+
+        if (!rawOutput && repairRawOutput) {
+          rawOutput = repairRawOutput;
+          choice = repairChoice;
+        }
+        if (!apiReasoning && repairReasoning) {
+          apiReasoning = repairReasoning;
+        }
+
+        if (repairParsed.parsedLine) {
+          rawOutput = repairRawOutput;
+          choice = repairChoice;
+          parsed = {
+            ...repairParsed,
+            parseStatus:
+              repairParsed.parseStatus === "ok"
+                ? "repair_ok"
+                : `repair_${repairParsed.parseStatus}`,
+            formatValid: false,
+          };
+          break;
+        }
       }
-      const parsed = parseBenchmarkOutput(rawOutput, puzzle.requiredPlies, promptContext.currentFen);
+
+      const latencyMs = Date.now() - started;
       const parsedLine = parsed.parsedLine;
       const correctStrict = parsedLine ? normalizeLine(parsedLine) === expectedLine : false;
 

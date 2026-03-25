@@ -1,5 +1,4 @@
 import Image from 'next/image';
-import { Analytics } from '@vercel/analytics/next';
 import BenchmarkExplorer from './BenchmarkExplorer';
 import { getLatestResults } from '../lib/results';
 import logo from '../icon.png';
@@ -63,7 +62,6 @@ export default async function ExplorerPage({
           </div>
         </header>
 
-        <Analytics />
         <BenchmarkExplorer activeView={activeView} results={results} />
       </div>
     </main>
