@@ -19,9 +19,9 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "x-ai/grok-code-fast-1",
-  modelName: "Grok Code Fast 1",
-  providerOrder: ["xai"],
+  modelId: "openai/gpt-5.4",
+  modelName: "GPT-5.4",
+  providerOrder: ["openai"],
 };
 
 export default config;
