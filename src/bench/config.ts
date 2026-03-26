@@ -19,9 +19,9 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "z-ai/glm-5",
-  modelName: "GLM-5",
-  providerOrder: ["baseten/fp4"],
+  modelId: "google/gemini-3.1-flash-image-preview",
+  modelName: "Gemini 3.1 Flash Image Preview",
+  providerOrder: ["Google AI Studio"],
 };
 
 export default config;
