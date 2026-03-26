@@ -19,9 +19,9 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "openai/gpt-5.4",
-  modelName: "GPT-5.4",
-  providerOrder: ["openai"],
+  modelId: "anthropic/claude-opus-4.6",
+  modelName: "Claude Opus 4.6",
+  providerOrder: ["Anthropic"],
 };
 
 export default config;
