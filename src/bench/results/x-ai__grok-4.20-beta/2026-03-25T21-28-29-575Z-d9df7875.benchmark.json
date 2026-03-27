@@ -29,7 +29,7 @@
     "totalPromptTokens": 91129,
     "totalCompletionTokens": 1639033,
     "totalReasoningTokens": 1614593,
-    "totalCost": 0,
+    "totalCost": 7.8989,
     "averageLatencyMs": 63831.973333333335
   },
   "attempts": [

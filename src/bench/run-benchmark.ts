@@ -45,6 +45,10 @@ function toNumber(value, fallback = 0) {
   return fallback;
 }
 
+function finiteNumberOrNull(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -654,8 +658,10 @@ function extractUsage(resp) {
     0
   );
   const totalTokens = toInt(usage.total_tokens, promptTokens + completionTokens);
-  // usage.cost is 0 when using BYOK — real cost is fetched via /api/v1/generation
-  const cost = toNumber(usage.cost, 0);
+  // For BYOK, OpenRouter returns the provider-billed amount in usage.cost_details.upstream_inference_cost.
+  // usage.cost is the amount charged to OpenRouter credits, so it may be 0 or only reflect the BYOK platform fee.
+  const upstreamInferenceCost = finiteNumberOrNull(usage?.cost_details?.upstream_inference_cost);
+  const cost = upstreamInferenceCost ?? toNumber(usage.cost, 0);
   return { promptTokens, completionTokens, reasoningTokens, totalTokens, cost };
 }
 
@@ -675,7 +681,8 @@ async function fetchGenerationCost(generationId: string): Promise<number> {
     );
     if (!res.ok) return 0;
     const json = await res.json();
-    return toNumber(json?.data?.total_cost, 0);
+    const upstreamInferenceCost = finiteNumberOrNull(json?.data?.upstream_inference_cost);
+    return upstreamInferenceCost ?? toNumber(json?.data?.total_cost, 0);
   } catch {
     return 0;
   }
