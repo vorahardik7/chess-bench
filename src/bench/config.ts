@@ -19,9 +19,9 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "z-ai/glm-5-turbo",
-  modelName: "GLM-5 Turbo",
-  providerOrder: ["atlas-cloud/fp8"],
+  modelId: "qwen/qwen3.5-122b-a10b",
+  modelName: "Qwen 3.5 (122B)",
+  providerOrder: ["novita/bf16"],
 };
 
 export default config;
