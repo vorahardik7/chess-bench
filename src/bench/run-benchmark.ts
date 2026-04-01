@@ -14,13 +14,13 @@ const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DATASET_PATH = path.resolve(process.cwd(), "src/bench/data/puzzles.json");
 const RESULTS_DIR = path.resolve(process.cwd(), "src/bench/results");
 const MAX_TOKENS = 200;
-const MAX_TOKENS_REASONING = 4096;
+const MAX_TOKENS_REASONING = 1024;
 const REASONING_EFFORT = "medium";
 const MISSING_OUTPUT_RETRY_ATTEMPTS = 1;
 const RETRIES = 4;
 const RETRY_BASE_MS = 1200;
 const STORE_RAW_RESPONSE = false;
-const CONCURRENCY = 5;
+const CONCURRENCY = 10;
 const IN_PROGRESS_SUFFIX = ".in-progress.tmp";
 
 let openrouterApiKey = "";
