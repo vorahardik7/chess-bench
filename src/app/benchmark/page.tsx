@@ -1,5 +1,6 @@
-import ExplorerPage from '../components/ExplorerPage';
+import { redirect } from 'next/navigation';
 
-export default async function BenchmarkPage() {
-  return <ExplorerPage activeView="benchmark" />;
+/** Legacy URL: same UI lives on `/` with client tabs. */
+export default function LegacyBenchmarkPage() {
+  redirect('/?tab=benchmark');
 }

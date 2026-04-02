@@ -4,9 +4,9 @@ import { getLatestResults } from '../lib/results';
 import logo from '../icon.png';
 
 export default async function ExplorerPage({
-  activeView,
+  defaultView = 'puzzle',
 }: {
-  activeView: 'puzzle' | 'benchmark';
+  defaultView?: 'puzzle' | 'benchmark';
 }) {
   const results = await getLatestResults();
   const modelCount = results.models.length;
@@ -62,7 +62,7 @@ export default async function ExplorerPage({
           </div>
         </header>
 
-        <BenchmarkExplorer activeView={activeView} results={results} />
+        <BenchmarkExplorer defaultView={defaultView} results={results} />
       </div>
     </main>
   );

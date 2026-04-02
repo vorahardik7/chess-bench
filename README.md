@@ -38,9 +38,7 @@ Start the UI:
 pnpm dev
 ```
 
-Open:
-- `http://localhost:3000/puzzle`
-- `http://localhost:3000/benchmark`
+Open `http://localhost:3000` and use the in-app tabs (instant switch). Deep links: `/?tab=benchmark`. Legacy paths `/puzzle` and `/benchmark` redirect to the same UI.
 
 ## How Scoring Works
 

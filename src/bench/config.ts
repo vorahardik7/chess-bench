@@ -19,8 +19,8 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "qwen/qwen3.6-plus-preview:free",
-  modelName: "Qwen 3.6 Plus (122B)",
+  modelId: "qwen/qwen3.6-plus:free",
+  modelName: "Qwen 3.6 Plus",
   providerOrder: ["alibaba"],
 };
 

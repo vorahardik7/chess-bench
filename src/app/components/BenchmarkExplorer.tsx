@@ -1,74 +1,97 @@
 'use client';
 
-import Link, { useLinkStatus } from 'next/link';
+import { useCallback, useEffect, useState } from 'react';
 import PuzzlesTab from './PuzzlesTab';
 import BenchmarksTab from './BenchmarksTab';
 import type { ExplorerResults } from '../lib/results.types';
 
-function TabPendingIndicator() {
-  const { pending } = useLinkStatus();
+type ExplorerTab = 'puzzle' | 'benchmark';
 
-  return (
-    <span
-      aria-hidden="true"
-      className={`h-1.5 w-1.5 rounded-full bg-[var(--accent)] transition-opacity duration-200 ${
-        pending ? 'opacity-100 animate-pulse' : 'opacity-0'
-      }`}
-    />
-  );
+function tabButtonStyle(active: boolean) {
+  return {
+    background: active ? 'var(--surface)' : 'transparent',
+    color: active ? 'var(--text-primary)' : 'var(--text-tertiary)',
+    boxShadow: active ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+  } as const;
 }
 
 export default function BenchmarkExplorer({
-  activeView,
+  defaultView,
   results,
 }: {
-  activeView: 'puzzle' | 'benchmark';
+  defaultView: ExplorerTab;
   results: ExplorerResults;
 }) {
+  const [activeView, setActiveView] = useState<ExplorerTab>(defaultView);
+
+  useEffect(() => {
+    setActiveView(defaultView);
+  }, [defaultView]);
+
+  const selectTab = useCallback((view: ExplorerTab) => {
+    setActiveView(view);
+    if (typeof window === 'undefined') return;
+    const next = new URL(window.location.href);
+    if (view === 'puzzle') {
+      next.searchParams.delete('tab');
+    } else {
+      next.searchParams.set('tab', view);
+    }
+    const qs = next.searchParams.toString();
+    window.history.replaceState(window.history.state, '', qs ? `${next.pathname}?${qs}` : next.pathname);
+  }, []);
+
   return (
     <div className="flex flex-col flex-1 min-h-0 gap-6">
-      {/* Compact View Switcher */}
-      <div className="flex items-center gap-1 p-1 rounded-lg w-fit" style={{ background: 'var(--border-subtle)' }}>
-        <Link
-          href="/puzzle"
-          prefetch={true}
-          scroll={false}
-          aria-current={activeView === 'puzzle' ? 'page' : undefined}
+      <div
+        className="flex items-center gap-1 p-1 rounded-lg w-fit"
+        style={{ background: 'var(--border-subtle)' }}
+        role="tablist"
+        aria-label="Main views"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeView === 'puzzle'}
+          id="tab-puzzle"
+          tabIndex={activeView === 'puzzle' ? 0 : -1}
+          onClick={() => selectTab('puzzle')}
           className="px-4 py-2 text-sm font-medium rounded-md transition-all"
-          style={{
-            background: activeView === 'puzzle' ? 'var(--surface)' : 'transparent',
-            color: activeView === 'puzzle' ? 'var(--text-primary)' : 'var(--text-tertiary)',
-            boxShadow: activeView === 'puzzle' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-          }}
+          style={tabButtonStyle(activeView === 'puzzle')}
         >
-          <span className="inline-flex items-center gap-2">
-            <span>Puzzle Explorer</span>
-            <TabPendingIndicator />
-          </span>
-        </Link>
-        <Link
-          href="/benchmark"
-          prefetch={true}
-          scroll={false}
-          aria-current={activeView === 'benchmark' ? 'page' : undefined}
+          Puzzle Explorer
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeView === 'benchmark'}
+          id="tab-benchmark"
+          tabIndex={activeView === 'benchmark' ? 0 : -1}
+          onClick={() => selectTab('benchmark')}
           className="px-4 py-2 text-sm font-medium rounded-md transition-all"
-          style={{
-            background: activeView === 'benchmark' ? 'var(--surface)' : 'transparent',
-            color: activeView === 'benchmark' ? 'var(--text-primary)' : 'var(--text-tertiary)',
-            boxShadow: activeView === 'benchmark' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-          }}
+          style={tabButtonStyle(activeView === 'benchmark')}
         >
-          <span className="inline-flex items-center gap-2">
-            <span>Benchmarks</span>
-            <TabPendingIndicator />
-          </span>
-        </Link>
+          Benchmarks
+        </button>
       </div>
 
-      {/* Content */}
-      <div className="flex flex-col flex-1 min-h-0">
-        {activeView === 'puzzle' && <PuzzlesTab results={results} />}
-        {activeView === 'benchmark' && <BenchmarksTab results={results} />}
+      <div className="flex flex-col flex-1 min-h-0 relative">
+        <div
+          role="tabpanel"
+          aria-labelledby="tab-puzzle"
+          className={`flex flex-col flex-1 min-h-0 ${activeView !== 'puzzle' ? 'hidden' : ''}`}
+          hidden={activeView !== 'puzzle'}
+        >
+          <PuzzlesTab results={results} />
+        </div>
+        <div
+          role="tabpanel"
+          aria-labelledby="tab-benchmark"
+          className={`flex flex-col flex-1 min-h-0 ${activeView !== 'benchmark' ? 'hidden' : ''}`}
+          hidden={activeView !== 'benchmark'}
+        >
+          <BenchmarksTab results={results} />
+        </div>
       </div>
     </div>
   );
