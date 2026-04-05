@@ -27,6 +27,8 @@ type DatasetPuzzleRow = {
 };
 
 type RunAttempt = {
+  /** Dataset order (0-based); set by bench runner so UI can match benchmark order without puzzles.json */
+  index?: number;
   puzzleId?: string;
   track?: string;
   ratingBucket?: string;
@@ -264,7 +266,7 @@ async function readRunFiles(): Promise<RunFile[]> {
 }
 
 function derivePuzzlesFromRuns(runs: RunFile[]): PuzzleView[] {
-  const byId = new Map<string, PuzzleView>();
+  const byId = new Map<string, { puzzle: PuzzleView; index: number }>();
   for (const run of runs) {
     for (const attempt of run.attempts ?? []) {
       const puzzleId = safeString(attempt.puzzleId);
@@ -274,22 +276,32 @@ function derivePuzzlesFromRuns(runs: RunFile[]): PuzzleView[] {
       if (!track || !fen) continue;
       const expectedLine = safeString(attempt.expectedLine);
       const requiredPlies = expectedLine ? expectedLine.trim().split(/\s+/).filter(Boolean).length : 1;
+      const index = Math.max(0, Math.trunc(safeNumber(attempt.index, 0)));
       byId.set(puzzleId, {
-        id: puzzleId,
-        level: track,
-        fen,
-        requiredPlies: Math.max(1, requiredPlies),
-        rating: null,
-        ratingBucket: safeString(attempt.ratingBucket) || null,
-        expectedLine,
-        initialMove: safeString(attempt.initialMove),
-        source: {
-          url: `https://lichess.org/training/${puzzleId}`,
+        index,
+        puzzle: {
+          id: puzzleId,
+          level: track,
+          fen,
+          requiredPlies: Math.max(1, requiredPlies),
+          rating: null,
+          ratingBucket: safeString(attempt.ratingBucket) || null,
+          expectedLine,
+          initialMove: safeString(attempt.initialMove),
+          source: {
+            url: `https://lichess.org/training/${puzzleId}`,
+          },
         },
       });
     }
   }
-  return Array.from(byId.values()).sort((a, b) => a.id.localeCompare(b.id));
+  return Array.from(byId.values())
+    .sort((a, b) => {
+      const d = a.index - b.index;
+      if (d !== 0) return d;
+      return a.puzzle.id.localeCompare(b.puzzle.id);
+    })
+    .map((entry) => entry.puzzle);
 }
 
 function selectBestRunPerModel(runs: RunFile[], datasetId: string | null): RunFile[] {
