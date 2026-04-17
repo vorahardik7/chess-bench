@@ -7,6 +7,15 @@ import type { ExplorerResults, ModelView, PuzzleAttemptView, PuzzleView } from '
 const DATASET_PATH = path.resolve(process.cwd(), 'src/bench/data/puzzles.json');
 const RESULTS_DIR = path.resolve(process.cwd(), 'src/bench/results');
 
+/**
+ * Maximum raw-output size (characters) embedded in the initial RSC payload.
+ * Longer values are truncated server-side and fetched on demand via the
+ * `/api/attempt/[modelId]/[puzzleId]` route, to keep the RSC body under
+ * Vercel's 19.07 MB per-response limit. `thinkingText` is always fetched on
+ * demand because some runs produce multi-megabyte reasoning traces.
+ */
+const MAX_INLINE_RAW_OUTPUT_CHARS = 4000;
+
 type DatasetFile = {
   datasetId?: string;
   generatedAt?: string;
@@ -133,6 +142,12 @@ function toAttemptView(raw: RunAttempt): PuzzleAttemptView | null {
     0,
     Math.trunc(safeNumber(raw?.usage?.totalTokens, promptTokens + completionTokens))
   );
+  const fullRawOutput = safeString(raw?.rawOutput);
+  const rawOutputTruncated = fullRawOutput.length > MAX_INLINE_RAW_OUTPUT_CHARS;
+  const rawOutput = rawOutputTruncated
+    ? fullRawOutput.slice(0, MAX_INLINE_RAW_OUTPUT_CHARS)
+    : fullRawOutput;
+  const thinkingChars = typeof raw?.thinkingText === 'string' ? raw.thinkingText.length : 0;
   return {
     puzzleId,
     track,
@@ -140,8 +155,11 @@ function toAttemptView(raw: RunAttempt): PuzzleAttemptView | null {
     expectedSanLine: typeof raw?.expectedSanLine === 'string' ? raw.expectedSanLine : null,
     parsedLine: raw?.parsedLine ?? null,
     sanLine: typeof raw?.sanLine === 'string' ? raw.sanLine : null,
-    rawOutput: safeString(raw?.rawOutput),
-    thinkingText: typeof raw?.thinkingText === 'string' ? raw.thinkingText : null,
+    rawOutput,
+    rawOutputTruncated,
+    // Deliberately omit thinkingText from the initial payload; fetched on demand.
+    thinkingText: null,
+    thinkingChars,
     parseStatus: safeString(raw?.parseStatus, 'missing'),
     formatValid: safeBool(raw?.formatValid, false),
     correctStrict: safeBool(raw?.correctStrict, false),
@@ -333,6 +351,35 @@ function selectBestRunPerModel(runs: RunFile[], datasetId: string | null): RunFi
     return bAcc - aAcc;
   });
   return selected;
+}
+
+export type AttemptDetail = {
+  rawOutput: string;
+  thinkingText: string | null;
+};
+
+/**
+ * Fetches the heavy fields (`rawOutput`, `thinkingText`) for a specific
+ * (modelId, puzzleId) pair by re-reading the selected run file. These are
+ * stripped / truncated from the initial RSC payload to stay under Vercel's
+ * response-size limit, so the UI requests them only when the user opens the
+ * corresponding panel.
+ */
+export async function getAttemptDetail(
+  modelId: string,
+  puzzleId: string
+): Promise<AttemptDetail | null> {
+  if (!modelId || !puzzleId) return null;
+  const [{ datasetId }, runs] = await Promise.all([readDatasetFile(), readRunFiles()]);
+  const selectedRuns = selectBestRunPerModel(runs, datasetId);
+  const run = selectedRuns.find((r) => safeString(r.modelId) === modelId);
+  if (!run) return null;
+  const attempt = (run.attempts ?? []).find((a) => safeString(a?.puzzleId) === puzzleId);
+  if (!attempt) return null;
+  return {
+    rawOutput: safeString(attempt.rawOutput),
+    thinkingText: typeof attempt.thinkingText === 'string' ? attempt.thinkingText : null,
+  };
 }
 
 export async function getLatestResults(): Promise<ExplorerResults> {

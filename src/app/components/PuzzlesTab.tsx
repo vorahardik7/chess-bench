@@ -303,6 +303,30 @@ export default function PuzzlesTab({
 
   const [showThinking, setShowThinking] = useState(false);
 
+  type AttemptDetail = { rawOutput: string; thinkingText: string | null };
+  const [detailCache, setDetailCache] = useState<Record<string, AttemptDetail>>({});
+  const [detailLoadingKey, setDetailLoadingKey] = useState<string | null>(null);
+  const detailKey = selectedModel && selectedPuzzle ? `${selectedModel.id}::${selectedPuzzle.id}` : null;
+  const detail = detailKey ? detailCache[detailKey] : undefined;
+  const loadDetail = async () => {
+    if (!detailKey || !selectedModel || !selectedPuzzle) return;
+    if (detailCache[detailKey] || detailLoadingKey === detailKey) return;
+    setDetailLoadingKey(detailKey);
+    try {
+      const res = await fetch(
+        `/api/attempt/${encodeURIComponent(selectedModel.id)}/${encodeURIComponent(selectedPuzzle.id)}`
+      );
+      if (res.ok) {
+        const data = (await res.json()) as AttemptDetail;
+        setDetailCache((c) => ({ ...c, [detailKey]: data }));
+      }
+    } catch {
+      // swallow — user can retry by clicking again
+    } finally {
+      setDetailLoadingKey((cur) => (cur === detailKey ? null : cur));
+    }
+  };
+
   const boardShapes = useMemo<DrawShape[]>(() => {
     if (!selectedPuzzle) return [];
     const shapes: DrawShape[] = [];
@@ -716,25 +740,44 @@ export default function PuzzlesTab({
 
                   {/* Raw output + thinking */}
                   <div className="px-4 py-3" style={{ borderBottom: (selectedPuzzle.source?.url || selectedPuzzle.source?.gameUrl) ? '1px solid var(--border-subtle)' : 'none' }}>
-                    <div className="text-[10px] uppercase tracking-wider font-semibold mb-1.5" style={{ color: 'var(--text-tertiary)' }}>
-                      Raw Output
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-tertiary)' }}>
+                        Raw Output
+                      </div>
+                      {selectedAttempt?.rawOutputTruncated && !detail && (
+                        <button
+                          onClick={loadDetail}
+                          disabled={detailLoadingKey === detailKey}
+                          className="text-[11px] hover:underline disabled:opacity-50"
+                          style={{ color: 'var(--accent)' }}
+                        >
+                          {detailLoadingKey === detailKey ? 'Loading…' : 'Show full output'}
+                        </button>
+                      )}
                     </div>
                     <pre className="text-xs whitespace-pre-wrap break-words font-mono leading-relaxed max-h-24 overflow-y-auto custom-scrollbar" style={{ color: 'var(--text-secondary)' }}>
-                      {selectedAttempt?.rawOutput || '—'}
+                      {detail?.rawOutput ?? selectedAttempt?.rawOutput ?? '—'}
+                      {selectedAttempt?.rawOutputTruncated && !detail && '…'}
                     </pre>
-                    {selectedAttempt?.thinkingText && (
+                    {selectedAttempt && selectedAttempt.thinkingChars > 0 && (
                       <>
                         <button
-                          onClick={() => setShowThinking(!showThinking)}
+                          onClick={() => {
+                            setShowThinking((prev) => {
+                              const next = !prev;
+                              if (next && !detail) void loadDetail();
+                              return next;
+                            });
+                          }}
                           className="mt-2 text-[11px] flex items-center gap-1 hover:underline"
                           style={{ color: 'var(--accent)' }}
                         >
                           <ChevronDown className={`w-3 h-3 transition-transform ${showThinking ? '' : '-rotate-90'}`} />
-                          Thinking ({selectedAttempt.thinkingText.length.toLocaleString()} chars)
+                          Thinking ({selectedAttempt.thinkingChars.toLocaleString()} chars)
                         </button>
                         {showThinking && (
                           <pre className="mt-2 text-xs whitespace-pre-wrap break-words font-mono leading-relaxed max-h-48 overflow-y-auto custom-scrollbar rounded p-2" style={{ color: 'var(--text-tertiary)', background: 'var(--border-subtle)' }}>
-                            {selectedAttempt.thinkingText}
+                            {detail?.thinkingText ?? (detailLoadingKey === detailKey ? 'Loading…' : '')}
                           </pre>
                         )}
                       </>

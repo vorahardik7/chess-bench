@@ -23,7 +23,9 @@ export type PuzzleAttemptView = {
   parsedLine: string | null;
   sanLine: string | null;
   rawOutput: string;
+  rawOutputTruncated: boolean;
   thinkingText: string | null;
+  thinkingChars: number;
   parseStatus: string;
   formatValid: boolean;
   correctStrict: boolean;
