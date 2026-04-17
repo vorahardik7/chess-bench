@@ -19,9 +19,9 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "qwen/qwen3.6-plus:free",
-  modelName: "Qwen 3.6 Plus",
-  providerOrder: ["alibaba"],
+  modelId: "anthropic/claude-opus-4.7",
+  modelName: "Claude Opus 4.7",
+  providerOrder: ["anthropic"],
 };
 
 export default config;

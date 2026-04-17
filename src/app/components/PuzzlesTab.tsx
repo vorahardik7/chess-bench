@@ -692,7 +692,7 @@ export default function PuzzlesTab({
 
                   {/* Usage stats */}
                   <div className="px-4 py-2.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <div className="grid grid-cols-4 gap-x-2 text-[11px]">
+                    <div className="grid grid-cols-3 gap-x-2 text-[11px]">
                       <div className="flex flex-col">
                         <span style={{ color: 'var(--text-tertiary)' }}>Prompt</span>
                         <span className="font-mono tabular-nums" style={{ color: 'var(--text-primary)' }}>
@@ -703,12 +703,6 @@ export default function PuzzlesTab({
                         <span style={{ color: 'var(--text-tertiary)' }}>Completion</span>
                         <span className="font-mono tabular-nums" style={{ color: 'var(--text-primary)' }}>
                           {(selectedAttempt?.usage.completionTokens ?? 0).toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="flex flex-col">
-                        <span style={{ color: 'var(--text-tertiary)' }}>Cost</span>
-                        <span className="font-mono tabular-nums" style={{ color: 'var(--text-primary)' }}>
-                          ${(selectedAttempt?.usage.cost ?? 0).toFixed(6)}
                         </span>
                       </div>
                       <div className="flex flex-col">

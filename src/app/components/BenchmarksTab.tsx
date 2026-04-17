@@ -514,10 +514,11 @@ export default function BenchmarksTab({
   };
 
   return (
-    <div className="flex flex-col gap-6 h-full min-h-0 overflow-y-auto custom-scrollbar">
+    <div className="flex flex-col gap-6">
       {/* Benchmarks Section */}
       <section
-        className="rounded-xl p-5"
+        id="benchmarks"
+        className="rounded-xl p-5 scroll-mt-8"
         style={{
           background: 'var(--surface)',
           border: '1px solid var(--border)',

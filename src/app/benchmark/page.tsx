@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 
-/** Legacy URL: same UI lives on `/` with client tabs. */
+/** Legacy URL: benchmarks now live on `/` below the puzzle explorer. */
 export default function LegacyBenchmarkPage() {
-  redirect('/?tab=benchmark');
+  redirect('/#benchmarks');
 }

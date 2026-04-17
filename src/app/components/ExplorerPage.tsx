@@ -3,18 +3,14 @@ import BenchmarkExplorer from './BenchmarkExplorer';
 import { getLatestResults } from '../lib/results';
 import logo from '../icon.png';
 
-export default async function ExplorerPage({
-  defaultView = 'puzzle',
-}: {
-  defaultView?: 'puzzle' | 'benchmark';
-}) {
+export default async function ExplorerPage() {
   const results = await getLatestResults();
   const modelCount = results.models.length;
   const puzzleCount = results.puzzles.length;
 
   return (
-    <main className="h-screen flex flex-col overflow-hidden font-sans" style={{ background: 'var(--background)', color: 'var(--text-primary)' }}>
-      <div className="flex-1 min-h-0 flex flex-col max-w-[1500px] w-full mx-auto px-4 sm:px-6 lg:px-8 xl:px-12 py-6">
+    <main className="min-h-screen flex flex-col font-sans" style={{ background: 'var(--background)', color: 'var(--text-primary)' }}>
+      <div className="flex-1 flex flex-col max-w-[1500px] w-full mx-auto px-4 sm:px-6 lg:px-8 xl:px-12 py-6">
         <header className="mb-6 relative flex flex-col items-center justify-center gap-4">
           <div className="flex flex-col sm:flex-row items-center gap-3">
             <div className="relative w-12 h-12 shrink-0 rounded-[10px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] bg-white border border-[#e2e8f0] overflow-hidden">
@@ -62,7 +58,7 @@ export default async function ExplorerPage({
           </div>
         </header>
 
-        <BenchmarkExplorer defaultView={defaultView} results={results} />
+        <BenchmarkExplorer results={results} />
       </div>
     </main>
   );
