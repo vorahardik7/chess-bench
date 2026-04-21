@@ -19,9 +19,9 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "anthropic/claude-opus-4.7",
-  modelName: "Claude Opus 4.7",
-  providerOrder: ["anthropic"],
+  modelId: "z-ai/glm-5.1",
+  modelName: "GLM-5.1",
+  providerOrder: ["atlas-cloud/fp8"],
 };
 
 export default config;
