@@ -19,9 +19,9 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "openai/gpt-5.5",
-  modelName: "GPT-5.5",
-  providerOrder: ["openai"],
+  modelId: "inclusionai/ling-2.6-1t:free",
+  modelName: "Linguist 2.6 1T",
+  providerOrder: ["novita"],
 };
 
 export default config;
