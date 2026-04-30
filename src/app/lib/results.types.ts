@@ -44,6 +44,7 @@ export type ModelView = {
   name: string;
   sublabel?: string;
   benchmarkLabel?: string | null;
+  updatedAt: string | null;
   score: number;
   breakdown: Record<string, number>;
   summary: {

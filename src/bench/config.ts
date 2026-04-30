@@ -19,9 +19,9 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "z-ai/glm-5.1",
-  modelName: "GLM-5.1",
-  providerOrder: ["atlas-cloud/fp8"],
+  modelId: "openai/gpt-5.5",
+  modelName: "GPT-5.5",
+  providerOrder: ["openai"],
 };
 
 export default config;

@@ -2,6 +2,7 @@ import 'server-only';
 
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { cache } from 'react';
 import type { ExplorerResults, ModelView, PuzzleAttemptView, PuzzleView } from './results.types';
 
 const DATASET_PATH = path.resolve(process.cwd(), 'src/bench/data/puzzles.json');
@@ -214,6 +215,7 @@ function toModelView(run: RunFile): ModelView | null {
     name: modelDisplayName(run, modelId),
     sublabel: benchmarkLabel ?? undefined,
     benchmarkLabel,
+    updatedAt: typeof run.createdAt === 'string' ? run.createdAt : null,
     score: Number((((safeNumber(summary?.accuracyStrict, accuracy)) * 100)).toFixed(1)),
     breakdown,
     summary: {
@@ -382,7 +384,7 @@ export async function getAttemptDetail(
   };
 }
 
-export async function getLatestResults(): Promise<ExplorerResults> {
+export const getLatestResults = cache(async (): Promise<ExplorerResults> => {
   const [{ datasetId, generatedAt, puzzles }, runs] = await Promise.all([
     readDatasetFile(),
     readRunFiles(),
@@ -399,4 +401,9 @@ export async function getLatestResults(): Promise<ExplorerResults> {
     models,
     runCount: selectedRuns.length,
   };
-}
+});
+
+export const getModelById = cache(async (modelId: string): Promise<ModelView | null> => {
+  const results = await getLatestResults();
+  return results.models.find((model) => model.id === modelId) ?? null;
+});

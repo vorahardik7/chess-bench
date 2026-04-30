@@ -1,15 +1,48 @@
 import type { Metadata } from "next";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import "@lichess-org/chessground/assets/chessground.base.css";
 import "@lichess-org/chessground/assets/chessground.cburnett.css";
 import "@lichess-org/chessground/assets/chessground.brown.css";
-import { Analytics } from "@vercel/analytics/next"
+import { Analytics } from "@vercel/analytics/next";
+import { SITE_DESCRIPTION, SITE_NAME, getSiteUrl } from "./lib/site";
 
+const siteUrl = getSiteUrl();
+const inter = Inter({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-app-sans",
+});
+const jetBrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-app-mono",
+});
 
 export const metadata: Metadata = {
-  title: "ChessBench",
-  description: "Benchmarking Large Language Models on chess puzzles with strict UCI output.",
-};  
+  metadataBase: new URL(siteUrl),
+  applicationName: SITE_NAME,
+  title: {
+    default: SITE_NAME,
+    template: `%s | ${SITE_NAME}`,
+  },
+  description: SITE_DESCRIPTION,
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    url: "/",
+    siteName: SITE_NAME,
+    title: SITE_NAME,
+    description: SITE_DESCRIPTION,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: SITE_NAME,
+    description: SITE_DESCRIPTION,
+  },
+};
 
 export default function RootLayout({
   children,
@@ -18,14 +51,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <Analytics />
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-      </head>
-      <body className="antialiased">
+      <body className={`${inter.variable} ${jetBrainsMono.variable} antialiased`}>
         {children}
+        <Analytics />
       </body>
     </html>
   );
