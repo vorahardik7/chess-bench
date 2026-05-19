@@ -19,9 +19,9 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "inclusionai/ling-2.6-1t:free",
-  modelName: "Linguist 2.6 1T",
-  providerOrder: ["novita"],
+  modelId: "google/gemini-3.5-flash",
+  modelName: "Gemini 3.5 Flash",
+  providerOrder: ["google-ai-studio"],
 };
 
 export default config;
