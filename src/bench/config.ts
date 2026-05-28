@@ -19,9 +19,9 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "google/gemini-3.5-flash",
-  modelName: "Gemini 3.5 Flash",
-  providerOrder: ["google-ai-studio"],
+  modelId: "anthropic/claude-opus-4.8",
+  modelName: "Claude Opus 4.8",
+  providerOrder: ["anthropic"],
 };
 
 export default config;
