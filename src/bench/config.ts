@@ -19,8 +19,8 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "x-ai/grok-4.3",
-  modelName: "Grok 4.3",
+  modelId: "x-ai/grok-4.20",
+  modelName: "Grok 4.20",
   providerOrder: ["xai"],
 };
 
