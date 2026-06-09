@@ -54,6 +54,13 @@ body {
   outline-offset: 2px;
 }
 
+/* Remove focus ring from inline search inputs in custom dropdowns */
+input[data-seamless]:focus,
+input[data-seamless]:focus-visible {
+  outline: none !important;
+  box-shadow: none;
+}
+
 /* Custom scrollbar styles */
 .custom-scrollbar {
   scrollbar-width: thin;

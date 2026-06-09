@@ -19,9 +19,9 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "x-ai/grok-4.20",
-  modelName: "Grok 4.20",
-  providerOrder: ["xai"],
+  modelId: "anthropic/claude-fable-5",
+  modelName: "Claude Fable 5",
+  providerOrder: ["anthropic"],
 };
 
 export default config;

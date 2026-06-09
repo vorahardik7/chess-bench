@@ -98,3 +98,34 @@ export function getModelLogoPath(modelId: string): string | null {
   
   return `/model_icons/${logoName}.svg`;
 }
+
+// Friendly display names for model providers / labs.
+const PROVIDER_LABELS: Record<string, string> = {
+  'x-ai': 'xAI',
+  'google': 'Google',
+  'openai': 'OpenAI',
+  'anthropic': 'Anthropic',
+  'mistralai': 'Mistral',
+  'deepseek': 'DeepSeek',
+  'nex-agi': 'DeepSeek',
+  'xiaomi': 'Xiaomi',
+  'allenai': 'AllenAI',
+  'z-ai': 'Z.ai',
+  'qwen': 'Qwen',
+  'nvidia': 'NVIDIA',
+  'bytedance-seed': 'ByteDance',
+  'stepfun': 'StepFun',
+};
+
+export function getModelProvider(modelId: string): string {
+  return modelId.split('/')[0] ?? '';
+}
+
+export function getProviderLabel(modelId: string): string {
+  const provider = getModelProvider(modelId);
+  if (PROVIDER_LABELS[provider]) return PROVIDER_LABELS[provider];
+  // Fall back to a title-cased version of the raw provider slug.
+  return provider
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}

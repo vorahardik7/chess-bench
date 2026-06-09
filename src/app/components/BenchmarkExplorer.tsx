@@ -11,7 +11,7 @@ export default function BenchmarkExplorer({
 }) {
   return (
     <div className="flex flex-col gap-8">
-      <div className="h-[calc(100vh-160px)] min-h-[640px] flex flex-col">
+      <div className="flex flex-col lg:h-[calc(100vh-160px)] lg:min-h-[640px]">
         <PuzzlesTab results={results} />
       </div>
       <BenchmarksTab results={results} />

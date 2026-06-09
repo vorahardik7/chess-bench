@@ -9,6 +9,7 @@ import {
   ChevronRight,
   ExternalLink,
   Info,
+  Search,
   X,
 } from 'lucide-react';
 import ChessBoard from './ChessBoard';
@@ -58,14 +59,20 @@ function CustomDropdown({
   options,
   onChange,
   placeholder = 'Select...',
+  searchable = false,
+  searchPlaceholder = 'Search...',
 }: {
   value: string;
   options: { id: string; label: string; sublabel?: string }[];
   onChange: (id: string) => void;
   placeholder?: string;
+  searchable?: boolean;
+  searchPlaceholder?: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const ref = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -77,7 +84,30 @@ function CustomDropdown({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Reset the query whenever the dropdown closes, and focus search on open.
+  useEffect(() => {
+    if (isOpen) {
+      if (searchable) {
+        const id = window.setTimeout(() => searchInputRef.current?.focus(), 0);
+        return () => window.clearTimeout(id);
+      }
+    } else {
+      setQuery('');
+    }
+  }, [isOpen, searchable]);
+
   const selected = options.find((o) => o.id === value);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredOptions = useMemo(() => {
+    if (!searchable || normalizedQuery.length === 0) return options;
+    return options.filter(
+      (o) =>
+        o.label.toLowerCase().includes(normalizedQuery) ||
+        o.sublabel?.toLowerCase().includes(normalizedQuery) ||
+        o.id.toLowerCase().includes(normalizedQuery)
+    );
+  }, [options, searchable, normalizedQuery]);
 
   return (
     <div ref={ref} className="relative">
@@ -112,44 +142,87 @@ function CustomDropdown({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.15 }}
-            className="absolute z-50 top-full mt-1 w-full max-h-[min(22rem,calc(100vh-180px))] overflow-y-auto overscroll-none rounded-lg shadow-lg custom-scrollbar"
+            className="absolute z-50 top-full mt-1 w-full max-h-[min(22rem,calc(100vh-180px))] overflow-hidden rounded-lg shadow-lg flex flex-col"
             style={{
               background: 'var(--surface)',
               border: '1px solid var(--border)',
             }}
           >
-            {options.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => {
-                  onChange(option.id);
-                  setIsOpen(false);
-                }}
-                className="w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors"
-                style={{
-                  background: value === option.id ? 'var(--accent-light)' : 'transparent',
-                }}
-                onMouseEnter={(e) => {
-                  if (value !== option.id) e.currentTarget.style.background = 'var(--border-subtle)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = value === option.id ? 'var(--accent-light)' : 'transparent';
-                }}
+            {searchable && (
+              <div
+                className="shrink-0 flex items-center gap-2 px-3"
+                style={{ borderBottom: '1px solid var(--border-subtle)' }}
               >
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                    {option.label}
-                  </div>
-                  {option.sublabel && (
-                    <div className="text-xs truncate" style={{ color: 'var(--text-tertiary)' }}>
-                      {option.sublabel}
-                    </div>
-                  )}
+                <Search
+                  className="w-4 h-4 shrink-0 pointer-events-none"
+                  style={{ color: 'var(--text-tertiary)' }}
+                />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  data-seamless
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={searchPlaceholder}
+                  className="flex-1 min-w-0 py-2.5 text-sm bg-transparent outline-none focus:outline-none focus-visible:outline-none placeholder:text-[var(--text-tertiary)]"
+                  style={{ color: 'var(--text-primary)' }}
+                />
+                {query.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuery('');
+                      searchInputRef.current?.focus();
+                    }}
+                    className="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-full transition-colors hover:bg-[var(--border-subtle)]"
+                    style={{ color: 'var(--text-tertiary)' }}
+                    aria-label="Clear search"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            )}
+            <div className="overflow-y-auto overscroll-none custom-scrollbar">
+              {filteredOptions.length === 0 ? (
+                <div className="px-3 py-6 text-center text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                  No matches found.
                 </div>
-                {value === option.id && <Check className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--accent)' }} />}
-              </button>
-            ))}
+              ) : (
+                filteredOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => {
+                      onChange(option.id);
+                      setIsOpen(false);
+                    }}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors"
+                    style={{
+                      background: value === option.id ? 'var(--accent-light)' : 'transparent',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (value !== option.id) e.currentTarget.style.background = 'var(--border-subtle)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = value === option.id ? 'var(--accent-light)' : 'transparent';
+                    }}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                        {option.label}
+                      </div>
+                      {option.sublabel && (
+                        <div className="text-xs truncate" style={{ color: 'var(--text-tertiary)' }}>
+                          {option.sublabel}
+                        </div>
+                      )}
+                    </div>
+                    {value === option.id && <Check className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--accent)' }} />}
+                  </button>
+                ))
+              )}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -392,12 +465,12 @@ export default function PuzzlesTab({
 
   return (
     <div
-      className="flex-1 h-full min-h-0 grid gap-6 lg:gap-6 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)] lg:items-stretch"
+      className="grid gap-5 sm:gap-6 lg:flex-1 lg:h-full lg:min-h-0 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)] lg:items-stretch"
     >
       {/* Sidebar */}
-      <aside className="flex flex-col h-full min-h-0">
+      <aside className="flex flex-col lg:h-full lg:min-h-0">
         <div
-          className="flex-1 min-h-0 flex flex-col rounded-xl h-full overflow-visible"
+          className="flex flex-col rounded-xl overflow-visible lg:flex-1 lg:min-h-0 lg:h-full"
           style={{
             background: 'var(--surface)',
             border: '1px solid var(--border)',
@@ -413,7 +486,7 @@ export default function PuzzlesTab({
                   type="button"
                   onClick={goPrev}
                   disabled={filteredPuzzles.length === 0 || selectedIndex === 0}
-                  className="inline-flex items-center justify-center w-7 h-7 rounded-md transition-colors disabled:opacity-30"
+                  className="inline-flex items-center justify-center w-7 h-7 rounded-md transition-colors disabled:opacity-30 hover:enabled:bg-[var(--border-subtle)] hover:enabled:text-[var(--text-primary)]"
                   style={{
                     border: '1px solid var(--border)',
                     color: 'var(--text-secondary)',
@@ -426,7 +499,7 @@ export default function PuzzlesTab({
                   type="button"
                   onClick={goNext}
                   disabled={filteredPuzzles.length === 0 || selectedIndex >= filteredPuzzles.length - 1}
-                  className="inline-flex items-center justify-center w-7 h-7 rounded-md transition-colors disabled:opacity-30"
+                  className="inline-flex items-center justify-center w-7 h-7 rounded-md transition-colors disabled:opacity-30 hover:enabled:bg-[var(--border-subtle)] hover:enabled:text-[var(--text-primary)]"
                   style={{
                     border: '1px solid var(--border)',
                     color: 'var(--text-secondary)',
@@ -464,6 +537,8 @@ export default function PuzzlesTab({
                 options={modelOptions}
                 onChange={setSelectedModelId}
                 placeholder="Choose a model..."
+                searchable
+                searchPlaceholder="Search models..."
               />
             </div>
 
@@ -491,9 +566,9 @@ export default function PuzzlesTab({
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 relative flex flex-col">
+          <div className="relative flex flex-col lg:flex-1 lg:min-h-0">
             <div
-              className="absolute inset-0 overflow-y-auto overflow-x-hidden px-2 py-2 custom-scrollbar"
+              className="overflow-y-auto overflow-x-hidden px-2 py-2 custom-scrollbar max-h-[40vh] lg:max-h-none lg:absolute lg:inset-0"
             >
               {filteredPuzzles.length === 0 ? (
                 <div className="p-6 text-sm text-center italic" style={{ color: 'var(--text-tertiary)' }}>No puzzles match your filters.</div>
@@ -539,15 +614,15 @@ export default function PuzzlesTab({
       </aside>
 
       {/* Main panel */}
-      <section className="flex flex-col h-full min-w-0 min-h-0">
+      <section className="flex flex-col min-w-0 lg:h-full lg:min-h-0">
         <div
-          className="flex-1 min-h-0 flex flex-col rounded-xl overflow-hidden w-full max-w-[1120px] xl:max-w-[1180px]"
+          className="flex flex-col rounded-xl overflow-hidden w-full max-w-[1120px] xl:max-w-[1180px] lg:flex-1 lg:min-h-0"
           style={{
             background: 'var(--surface)',
             border: '1px solid var(--border)',
           }}
         >
-          <div className="shrink-0 px-5 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+          <div className="shrink-0 px-4 py-3 sm:px-5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
             <div className="flex items-center justify-between gap-4">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -585,7 +660,7 @@ export default function PuzzlesTab({
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto p-5 xl:p-6 custom-scrollbar">
+          <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 xl:p-6 custom-scrollbar">
             {!selectedPuzzle ? (
               <div className="flex h-full items-center justify-center">
                 <div className="text-center max-w-xs px-6">

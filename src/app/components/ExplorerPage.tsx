@@ -54,35 +54,28 @@ export default async function ExplorerPage() {
                 priority
               />
             </div>
-            <div className="min-w-0 flex items-baseline gap-2.5">
+            <div className="min-w-0 flex items-center gap-2.5">
               <h1 className="text-[17px] font-semibold tracking-tight leading-none">
                 ChessBench
               </h1>
-              <span
-                className="hidden sm:inline text-[12px] leading-none truncate"
-                style={{ color: 'var(--text-tertiary)' }}
+              <a
+                href="https://github.com/vorahardik7/chess-bench"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="View the ChessBench GitHub repository (opens in new tab)"
+                title="GitHub repo"
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-colors duration-150 hover:border-[var(--accent)] hover:bg-[var(--accent-light)] hover:text-[var(--accent)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
               >
-                LLM chess tactics, scored on strict UCI answers
-              </span>
+                <svg
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5 shrink-0 fill-current"
+                >
+                  <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.39.6.11.82-.26.82-.58v-2.2c-3.34.73-4.04-1.41-4.04-1.41-.55-1.38-1.33-1.75-1.33-1.75-1.09-.74.09-.72.09-.72 1.2.08 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.49 1 .11-.77.42-1.3.76-1.6-2.66-.3-5.47-1.33-5.47-5.91 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.53.12-3.18 0 0 1.01-.32 3.3 1.23a11.46 11.46 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.77.84 1.24 1.9 1.24 3.22 0 4.59-2.81 5.61-5.49 5.91.43.37.81 1.1.81 2.22v3.29c0 .32.21.7.82.58C20.57 21.8 24 17.3 24 12 24 5.37 18.63 0 12 0z" />
+                </svg>
+              </a>
             </div>
           </div>
-
-          <a
-            href="https://github.com/vorahardik7/chess-bench"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="View the ChessBench GitHub repository (opens in new tab)"
-            className="group inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] transition-colors duration-150 hover:border-[var(--accent)] hover:text-[var(--text-primary)] hover:bg-[var(--accent-light)]"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-              className="h-3.5 w-3.5 fill-current"
-            >
-              <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.39.6.11.82-.26.82-.58v-2.2c-3.34.73-4.04-1.41-4.04-1.41-.55-1.38-1.33-1.75-1.33-1.75-1.09-.74.09-.72.09-.72 1.2.08 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.49 1 .11-.77.42-1.3.76-1.6-2.66-.3-5.47-1.33-5.47-5.91 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.53.12-3.18 0 0 1.01-.32 3.3 1.23a11.46 11.46 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.77.84 1.24 1.9 1.24 3.22 0 4.59-2.81 5.61-5.49 5.91.43.37.81 1.1.81 2.22v3.29c0 .32.21.7.82.58C20.57 21.8 24 17.3 24 12 24 5.37 18.63 0 12 0z" />
-            </svg>
-            <span className="leading-none">GitHub</span>
-          </a>
         </header>
 
         <BenchmarkExplorer results={results} />

@@ -10,6 +10,8 @@ import {
   ChevronUp,
   Check,
   Filter,
+  Search,
+  X,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -23,7 +25,7 @@ import {
   Rectangle,
 } from 'recharts';
 import type { BarShapeProps } from 'recharts';
-import { getModelLogoPath } from './utils';
+import { getModelLogoPath, getProviderLabel, getModelProvider } from './utils';
 import type { ExplorerResults } from '../lib/results.types';
 type BenchModel = {
   id: string;
@@ -84,7 +86,9 @@ function MultiSelectDropdown({
   label?: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const ref = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -96,6 +100,14 @@ function MultiSelectDropdown({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (isOpen) {
+      const id = window.setTimeout(() => searchInputRef.current?.focus(), 0);
+      return () => window.clearTimeout(id);
+    }
+    setQuery('');
+  }, [isOpen]);
+
   const toggleItem = (id: string) => {
     const newSelected = new Set(selected);
     if (newSelected.has(id)) {
@@ -106,12 +118,55 @@ function MultiSelectDropdown({
     onChange(newSelected);
   };
 
+  const normalizedQuery = query.trim().toLowerCase();
+  const [labFilter, setLabFilter] = useState<string>('all');
+
+  // Build the list of labs present in the options.
+  const labs = useMemo(() => {
+    const map = new Map<string, string>();
+    options.forEach((o) => {
+      const provider = getModelProvider(o.id);
+      if (provider && !map.has(provider)) {
+        map.set(provider, getProviderLabel(o.id));
+      }
+    });
+    return Array.from(map, ([id, label]) => ({ id, label })).sort((a, b) =>
+      a.label.localeCompare(b.label)
+    );
+  }, [options]);
+
+  // Reset lab filter if it no longer exists in the option set.
+  useEffect(() => {
+    if (labFilter !== 'all' && !labs.some((l) => l.id === labFilter)) {
+      setLabFilter('all');
+    }
+  }, [labs, labFilter]);
+
+  const filteredOptions = useMemo(() => {
+    return options.filter((o) => {
+      const matchesLab = labFilter === 'all' || getModelProvider(o.id) === labFilter;
+      if (!matchesLab) return false;
+      if (normalizedQuery.length === 0) return true;
+      return (
+        o.label.toLowerCase().includes(normalizedQuery) ||
+        o.id.toLowerCase().includes(normalizedQuery)
+      );
+    });
+  }, [options, normalizedQuery, labFilter]);
+
+  // "Select all" / "Clear" operate on the currently visible (filtered) options
+  // so users can quickly toggle a subset they've searched or filtered for.
+  const isScoped = normalizedQuery.length > 0 || labFilter !== 'all';
   const selectAll = () => {
-    onChange(new Set(options.map((o) => o.id)));
+    const newSelected = new Set(selected);
+    filteredOptions.forEach((o) => newSelected.add(o.id));
+    onChange(newSelected);
   };
 
   const selectNone = () => {
-    onChange(new Set());
+    const newSelected = new Set(selected);
+    filteredOptions.forEach((o) => newSelected.delete(o.id));
+    onChange(newSelected);
   };
 
   return (
@@ -144,63 +199,183 @@ function MultiSelectDropdown({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.15 }}
-            className="absolute right-0 z-50 top-full mt-1 w-64 max-h-80 overflow-y-auto overscroll-none rounded-lg shadow-lg"
+            className="absolute right-0 z-50 top-full mt-1 w-[min(20rem,calc(100vw-2rem))] max-h-[min(26rem,calc(100vh-160px))] overflow-hidden rounded-lg shadow-lg flex flex-col"
             style={{
               background: 'var(--surface)',
               border: '1px solid var(--border)',
             }}
           >
+            {/* Seamless search */}
+            <div
+              className="shrink-0 flex items-center gap-2 px-3"
+              style={{ borderBottom: '1px solid var(--border-subtle)' }}
+            >
+              <Search
+                className="w-4 h-4 shrink-0 pointer-events-none"
+                style={{ color: 'var(--text-tertiary)' }}
+              />
+              <input
+                ref={searchInputRef}
+                type="text"
+                data-seamless
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search models..."
+                className="flex-1 min-w-0 py-2.5 text-sm bg-transparent outline-none focus:outline-none focus-visible:outline-none placeholder:text-[var(--text-tertiary)]"
+                style={{ color: 'var(--text-primary)' }}
+              />
+              {query.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery('');
+                    searchInputRef.current?.focus();
+                  }}
+                  className="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-full transition-colors hover:bg-[var(--border-subtle)]"
+                  style={{ color: 'var(--text-tertiary)' }}
+                  aria-label="Clear search"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Lab filter chips */}
+            {labs.length > 1 && (
+              <div
+                className="shrink-0 flex flex-wrap gap-1.5 px-3 py-2.5"
+                style={{ borderBottom: '1px solid var(--border-subtle)' }}
+              >
+                <LabChip
+                  active={labFilter === 'all'}
+                  label="All labs"
+                  onClick={() => setLabFilter('all')}
+                />
+                {labs.map((lab) => (
+                  <LabChip
+                    key={lab.id}
+                    active={labFilter === lab.id}
+                    label={lab.label}
+                    logo={getModelLogoPath(`${lab.id}/x`)}
+                    onClick={() => setLabFilter(lab.id)}
+                  />
+                ))}
+              </div>
+            )}
+
             {/* Quick actions */}
-            <div className="flex items-center gap-2 p-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+            <div className="flex items-center gap-2 p-2 shrink-0" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
               <button
                 type="button"
                 onClick={selectAll}
-                className="flex-1 px-2 py-1.5 text-xs font-medium rounded transition-colors"
+                className="flex-1 px-2 py-1.5 text-xs font-medium rounded-md transition-colors hover:bg-[var(--accent-light)] hover:text-[var(--accent)]"
                 style={{ color: 'var(--text-secondary)' }}
               >
-                Select all
+                {isScoped ? 'Select shown' : 'Select all'}
               </button>
               <button
                 type="button"
                 onClick={selectNone}
-                className="flex-1 px-2 py-1.5 text-xs font-medium rounded transition-colors"
+                className="flex-1 px-2 py-1.5 text-xs font-medium rounded-md transition-colors hover:bg-[var(--border-subtle)] hover:text-[var(--text-primary)]"
                 style={{ color: 'var(--text-secondary)' }}
               >
-                Clear
+                {isScoped ? 'Clear shown' : 'Clear'}
               </button>
             </div>
 
             {/* Options */}
-            <div className="p-1">
-              {options.map((option) => {
-                const isChecked = selected.has(option.id);
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => toggleItem(option.id)}
-                    className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-left transition-colors"
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--border-subtle)'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                  >
-                    <div
-                      className="w-4 h-4 rounded flex items-center justify-center transition-colors"
-                      style={{
-                        background: isChecked ? 'var(--accent)' : 'var(--surface)',
-                        border: isChecked ? '1px solid var(--accent)' : '1px solid var(--border)',
-                      }}
+            <div className="p-1 overflow-y-auto overscroll-none custom-scrollbar">
+              {filteredOptions.length === 0 ? (
+                <div className="px-3 py-6 text-center text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                  No matches found.
+                </div>
+              ) : (
+                filteredOptions.map((option) => {
+                  const isChecked = selected.has(option.id);
+                  const logoPath = getModelLogoPath(option.id);
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => toggleItem(option.id)}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-left transition-colors"
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--border-subtle)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                     >
-                      {isChecked && <Check className="w-3 h-3 text-white" />}
-                    </div>
-                    <span className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>{option.label}</span>
-                  </button>
-                );
-              })}
+                      <div
+                        className="w-4 h-4 rounded flex items-center justify-center transition-colors shrink-0"
+                        style={{
+                          background: isChecked ? 'var(--accent)' : 'var(--surface)',
+                          border: isChecked ? '1px solid var(--accent)' : '1px solid var(--border)',
+                        }}
+                      >
+                        {isChecked && <Check className="w-3 h-3 text-white" />}
+                      </div>
+                      {logoPath && (
+                        <Image
+                          src={logoPath}
+                          alt=""
+                          width={16}
+                          height={16}
+                          className="w-4 h-4 shrink-0"
+                          style={{ opacity: 0.7 }}
+                          unoptimized
+                        />
+                      )}
+                      <span className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>{option.label}</span>
+                    </button>
+                  );
+                })
+              )}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+function LabChip({
+  active,
+  label,
+  logo,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  logo?: string | null;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors"
+      style={{
+        background: active ? 'var(--accent)' : 'var(--border-subtle)',
+        color: active ? '#ffffff' : 'var(--text-secondary)',
+        border: `1px solid ${active ? 'var(--accent)' : 'transparent'}`,
+      }}
+      onMouseEnter={(e) => {
+        if (!active) e.currentTarget.style.background = 'var(--accent-light)';
+      }}
+      onMouseLeave={(e) => {
+        if (!active) e.currentTarget.style.background = 'var(--border-subtle)';
+      }}
+    >
+      {logo && (
+        <Image
+          src={logo}
+          alt=""
+          width={12}
+          height={12}
+          className="w-3 h-3"
+          style={{ opacity: active ? 1 : 0.7 }}
+          unoptimized
+        />
+      )}
+      {label}
+    </button>
   );
 }
 
@@ -518,7 +693,7 @@ export default function BenchmarksTab({
       {/* Benchmarks Section */}
       <section
         id="benchmarks"
-        className="rounded-xl p-5 scroll-mt-8"
+        className="rounded-xl p-4 sm:p-5 scroll-mt-8"
         style={{
           background: 'var(--surface)',
           border: '1px solid var(--border)',
@@ -540,7 +715,7 @@ export default function BenchmarksTab({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search models..."
-              className="px-3 py-2 rounded-lg text-xs min-w-[180px] sm:min-w-[220px]"
+              className="px-3 py-2 rounded-lg text-xs flex-1 min-w-[160px] sm:flex-none sm:min-w-[220px]"
               style={{
                 background: 'var(--surface)',
                 border: '1px solid var(--border)',
