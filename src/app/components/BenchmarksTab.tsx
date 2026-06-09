@@ -119,7 +119,7 @@ function MultiSelectDropdown({
   };
 
   const normalizedQuery = query.trim().toLowerCase();
-  const [labFilter, setLabFilter] = useState<string>('all');
+  const [selectedLabIds, setSelectedLabIds] = useState<Set<string>>(() => new Set());
 
   // Build the list of labs present in the options.
   const labs = useMemo(() => {
@@ -135,16 +135,9 @@ function MultiSelectDropdown({
     );
   }, [options]);
 
-  // Reset lab filter if it no longer exists in the option set.
-  useEffect(() => {
-    if (labFilter !== 'all' && !labs.some((l) => l.id === labFilter)) {
-      setLabFilter('all');
-    }
-  }, [labs, labFilter]);
-
   const filteredOptions = useMemo(() => {
     return options.filter((o) => {
-      const matchesLab = labFilter === 'all' || getModelProvider(o.id) === labFilter;
+      const matchesLab = selectedLabIds.size === 0 || selectedLabIds.has(getModelProvider(o.id));
       if (!matchesLab) return false;
       if (normalizedQuery.length === 0) return true;
       return (
@@ -152,11 +145,11 @@ function MultiSelectDropdown({
         o.id.toLowerCase().includes(normalizedQuery)
       );
     });
-  }, [options, normalizedQuery, labFilter]);
+  }, [options, normalizedQuery, selectedLabIds]);
 
   // "Select all" / "Clear" operate on the currently visible (filtered) options
   // so users can quickly toggle a subset they've searched or filtered for.
-  const isScoped = normalizedQuery.length > 0 || labFilter !== 'all';
+  const isScoped = normalizedQuery.length > 0 || selectedLabIds.size > 0;
   const selectAll = () => {
     const newSelected = new Set(selected);
     filteredOptions.forEach((o) => newSelected.add(o.id));
@@ -167,6 +160,27 @@ function MultiSelectDropdown({
     const newSelected = new Set(selected);
     filteredOptions.forEach((o) => newSelected.delete(o.id));
     onChange(newSelected);
+  };
+
+  const applyLabSelection = (labIds: Set<string>) => {
+    setSelectedLabIds(labIds);
+    onChange(
+      new Set(
+        options
+          .filter((o) => labIds.size === 0 || labIds.has(getModelProvider(o.id)))
+          .map((o) => o.id)
+      )
+    );
+  };
+
+  const toggleLab = (labId: string) => {
+    const nextLabIds = selectedLabIds.size === 0 ? new Set<string>([labId]) : new Set(selectedLabIds);
+    if (selectedLabIds.has(labId)) {
+      nextLabIds.delete(labId);
+    } else {
+      nextLabIds.add(labId);
+    }
+    applyLabSelection(nextLabIds);
   };
 
   return (
@@ -199,7 +213,7 @@ function MultiSelectDropdown({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.15 }}
-            className="absolute right-0 z-50 top-full mt-1 w-[min(20rem,calc(100vw-2rem))] max-h-[min(26rem,calc(100vh-160px))] overflow-hidden rounded-lg shadow-lg flex flex-col"
+            className="absolute right-0 z-50 top-full mt-1 h-[min(26rem,calc(100vh-160px))] w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-lg shadow-lg flex flex-col"
             style={{
               background: 'var(--surface)',
               border: '1px solid var(--border)',
@@ -243,23 +257,33 @@ function MultiSelectDropdown({
             {/* Lab filter chips */}
             {labs.length > 1 && (
               <div
-                className="shrink-0 flex flex-wrap gap-1.5 px-3 py-2.5"
+                className="shrink-0 px-3 py-2.5"
                 style={{ borderBottom: '1px solid var(--border-subtle)' }}
               >
-                <LabChip
-                  active={labFilter === 'all'}
-                  label="All labs"
-                  onClick={() => setLabFilter('all')}
-                />
-                {labs.map((lab) => (
-                  <LabChip
-                    key={lab.id}
-                    active={labFilter === lab.id}
-                    label={lab.label}
-                    logo={getModelLogoPath(`${lab.id}/x`)}
-                    onClick={() => setLabFilter(lab.id)}
-                  />
-                ))}
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--text-tertiary)' }}>
+                    Labs
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => applyLabSelection(new Set())}
+                    className="rounded px-1.5 py-1 text-[11px] font-medium transition-colors hover:bg-[var(--border-subtle)] hover:text-[var(--text-primary)]"
+                    style={{ color: selectedLabIds.size === 0 ? 'var(--accent)' : 'var(--text-tertiary)' }}
+                  >
+                    All labs
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {labs.map((lab) => (
+                    <LabChip
+                      key={lab.id}
+                      active={selectedLabIds.has(lab.id)}
+                      label={lab.label}
+                      logo={getModelLogoPath(`${lab.id}/x`)}
+                      onClick={() => toggleLab(lab.id)}
+                    />
+                  ))}
+                </div>
               </div>
             )}
 
@@ -284,7 +308,7 @@ function MultiSelectDropdown({
             </div>
 
             {/* Options */}
-            <div className="p-1 overflow-y-auto overscroll-none custom-scrollbar">
+            <div className="min-h-0 flex-1 p-1 overflow-y-auto overscroll-none custom-scrollbar">
               {filteredOptions.length === 0 ? (
                 <div className="px-3 py-6 text-center text-xs" style={{ color: 'var(--text-tertiary)' }}>
                   No matches found.
@@ -350,7 +374,8 @@ function LabChip({
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors"
+      aria-pressed={active}
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors"
       style={{
         background: active ? 'var(--accent)' : 'var(--border-subtle)',
         color: active ? '#ffffff' : 'var(--text-secondary)',
