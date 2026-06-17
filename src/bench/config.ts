@@ -19,9 +19,9 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "anthropic/claude-fable-5",
-  modelName: "Claude Fable 5",
-  providerOrder: ["anthropic"],
+  modelId: "z-ai/glm-5.2",
+  modelName: "GLM 5.2",
+  providerOrder: ["z-ai/fp8"],
 };
 
 export default config;
