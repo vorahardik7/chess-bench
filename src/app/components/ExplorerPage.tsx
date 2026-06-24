@@ -6,7 +6,6 @@ import logo from '../icon.png';
 import {
   SITE_DESCRIPTION,
   SITE_NAME,
-  getModelRoute,
   toAbsoluteUrl,
 } from '../lib/site';
 
@@ -29,7 +28,6 @@ export default async function ExplorerPage() {
         '@type': 'ListItem',
         position: index + 1,
         name: model.name,
-        url: toAbsoluteUrl(getModelRoute(model.id)),
       })),
     },
   ];

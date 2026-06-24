@@ -37,35 +37,6 @@ export function toAbsoluteUrl(pathname = "/"): string {
   return new URL(pathname, `${getSiteUrl()}/`).toString();
 }
 
-export function splitModelId(modelId: string): {
-  provider: string;
-  model: string;
-} {
-  const [provider, ...rest] = modelId.split("/");
-  if (!provider) {
-    return { provider: "model", model: "unknown" };
-  }
-  if (rest.length === 0) {
-    return { provider: "model", model: provider };
-  }
-  return {
-    provider,
-    model: rest.join("/"),
-  };
-}
-
-export function modelIdFromParams(provider: string, model: string): string {
-  if (provider === "model") {
-    return model;
-  }
-  return `${provider}/${model}`;
-}
-
-export function getModelRoute(modelId: string): string {
-  const { provider, model } = splitModelId(modelId);
-  return `/models/${encodeURIComponent(provider)}/${encodeURIComponent(model)}`;
-}
-
 export function formatTrackLabel(level: string): string {
   if (level === "mate1" || level === "mateIn1") return "Mate in 1";
   if (level === "mate2" || level === "mateIn2") return "Mate in 2";

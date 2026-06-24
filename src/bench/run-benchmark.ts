@@ -6,11 +6,13 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Chess } from "chess.js";
+import OpenAI from "openai";
 import { envString, envTrimmed, loadBenchEnv } from "./env";
 import { buildUserPrompt, SYSTEM_PROMPT } from "./prompt";
 import benchConfig from "./config";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const SAKANA_BASE_URL = "https://api.sakana.ai/v1";
 const DATASET_PATH = path.resolve(process.cwd(), "src/bench/data/puzzles.json");
 const RESULTS_DIR = path.resolve(process.cwd(), "src/bench/results");
 const MAX_TOKENS = 200;
@@ -23,10 +25,38 @@ const STORE_RAW_RESPONSE = false;
 const CONCURRENCY = 10;
 const IN_PROGRESS_SUFFIX = ".in-progress.tmp";
 
-let openrouterApiKey = "";
+const API_PROVIDERS = {
+  openrouter: {
+    id: "openrouter",
+    label: "OpenRouter",
+    baseURL: OPENROUTER_BASE_URL,
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    defaultReasoningEffort: REASONING_EFFORT,
+    defaultSupportedParams: null,
+    supportsGenerationCost: true,
+    supportsModelMetadata: true,
+  },
+  sakana: {
+    id: "sakana",
+    label: "Sakana API",
+    baseURL: SAKANA_BASE_URL,
+    apiKeyEnv: "SAKANA_API_KEY",
+    defaultReasoningEffort: "high",
+    defaultSupportedParams: ["max_tokens", "reasoning"],
+    supportsGenerationCost: false,
+    supportsModelMetadata: false,
+  },
+};
+
+let apiKey = "";
+let apiBaseURL = "";
+let apiClient = null;
+let apiProvider = API_PROVIDERS.openrouter;
 let modelId = "";
+let apiModelId = "";
 let modelName = "";
 let modelSupportedParams = new Set();
+let reasoningEffort = REASONING_EFFORT;
 let useReasoning = false;
 
 function assert(condition, message) {
@@ -63,6 +93,16 @@ function inProgressPath(modelResultsDir, datasetId) {
 
 function displayModelName(modelId) {
   return modelName || modelId;
+}
+
+function resolveApiProvider(providerId) {
+  const normalized = String(providerId || "openrouter").trim().toLowerCase();
+  const provider = API_PROVIDERS[normalized];
+  assert(
+    provider,
+    `Unsupported benchmark API provider "${providerId}". Use "openrouter" or "sakana".`
+  );
+  return provider;
 }
 
 function normalizeLine(line) {
@@ -556,9 +596,9 @@ function createUserPrompt(puzzle) {
 }
 
 async function fetchModelMetadata() {
-  const url = `${OPENROUTER_BASE_URL}/models`;
+  const url = `${apiBaseURL}/models`;
   const headers = { Accept: "application/json" };
-  if (openrouterApiKey) headers.Authorization = `Bearer ${openrouterApiKey}`;
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   const res = await fetch(url, { headers });
   if (!res.ok) {
     throw new Error(`Unable to fetch model metadata (${res.status} ${res.statusText})`);
@@ -569,6 +609,13 @@ async function fetchModelMetadata() {
 }
 
 async function loadSupportedParameters(modelId) {
+  if (Array.isArray(benchConfig.supportedParams)) {
+    return new Set(benchConfig.supportedParams);
+  }
+  if (!apiProvider.supportsModelMetadata) {
+    return new Set(apiProvider.defaultSupportedParams ?? []);
+  }
+
   try {
     const models = await fetchModelMetadata();
     const row = models.find((m) => m?.id === modelId);
@@ -602,51 +649,85 @@ function buildCompletionBody({ modelId, systemPrompt, userPrompt }) {
       { role: "user", content: userPrompt },
     ],
     max_tokens: useReasoning ? MAX_TOKENS_REASONING : MAX_TOKENS,
-    provider: {
+  };
+  if (apiProvider.id === "openrouter") {
+    body.provider = {
       allow_fallbacks: false,
       ...(benchConfig.providerOrder ? { order: benchConfig.providerOrder } : {}),
-    },
-  };
+    };
+  }
   if (modelSupportedParams.has("temperature")) {
     body.temperature = 0;
   }
   if (useReasoning) {
-    body.reasoning = { effort: REASONING_EFFORT };
+    body.reasoning = { effort: reasoningEffort };
   }
   return body;
 }
 
+function apiErrorStatus(error) {
+  return typeof error?.status === "number" ? error.status : 0;
+}
+
+function apiErrorBody(error) {
+  const body = error?.error ?? error?.body ?? error?.response?.data;
+  if (!body) return "";
+  if (typeof body === "string") return body;
+  try {
+    return JSON.stringify(body);
+  } catch {
+    return String(body);
+  }
+}
+
 async function postCompletion(body) {
-  const url = `${OPENROUTER_BASE_URL}/chat/completions`;
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${openrouterApiKey}`,
-  };
-
   for (let attempt = 0; attempt <= RETRIES; attempt += 1) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    });
+    try {
+      return await apiClient.chat.completions.create(body);
+    } catch (error) {
+      const status = apiErrorStatus(error);
+      const retryable = status === 0 || [408, 409, 429, 500, 502, 503, 504].includes(status);
+      if (!retryable || attempt === RETRIES) {
+        const bodyText = apiErrorBody(error);
+        const statusText = status || "unknown";
+        const detail = bodyText ? `. Body: ${bodyText.slice(0, 400)}` : "";
+        throw new Error(
+          `${apiProvider.label} error ${statusText}: ${error instanceof Error ? error.message : String(error)}${detail}`
+        );
+      }
 
-    if (res.ok) {
-      return await res.json();
+      const waitMs = RETRY_BASE_MS * 2 ** attempt;
+      await delay(waitMs);
     }
-
-    const retryable = [408, 409, 429, 500, 502, 503, 504].includes(res.status);
-    const text = await res.text();
-    if (!retryable || attempt === RETRIES) {
-      throw new Error(
-        `OpenRouter error ${res.status}: ${res.statusText}. Body: ${text.slice(0, 400)}`
-      );
-    }
-
-    const waitMs = RETRY_BASE_MS * 2 ** attempt;
-    await delay(waitMs);
   }
 
   throw new Error("Unreachable retry state.");
+}
+
+async function fetchGenerationCost(generationId: string): Promise<number> {
+  if (!apiProvider.supportsGenerationCost) {
+    return 0;
+  }
+  try {
+    const res = await fetch(
+      `${apiBaseURL}/generation?id=${generationId}`,
+      { headers: { Authorization: `Bearer ${apiKey}` } }
+    );
+    if (!res.ok) return 0;
+    const json = await res.json();
+    const upstreamInferenceCost = finiteNumberOrNull(json?.data?.upstream_inference_cost);
+    return upstreamInferenceCost ?? toNumber(json?.data?.total_cost, 0);
+  } catch {
+    return 0;
+  }
+}
+
+async function extractUsageWithCost(response) {
+  const usage = extractUsage(response);
+  if (usage.cost === 0 && response?.id) {
+    usage.cost = await fetchGenerationCost(response.id);
+  }
+  return usage;
 }
 
 function extractUsage(resp) {
@@ -671,29 +752,6 @@ function mergeUsageTotals(base, extra) {
   base.reasoningTokens += extra.reasoningTokens;
   base.totalTokens += extra.totalTokens;
   base.cost += extra.cost;
-}
-
-async function fetchGenerationCost(generationId: string): Promise<number> {
-  try {
-    const res = await fetch(
-      `${OPENROUTER_BASE_URL}/generation?id=${generationId}`,
-      { headers: { Authorization: `Bearer ${openrouterApiKey}` } }
-    );
-    if (!res.ok) return 0;
-    const json = await res.json();
-    const upstreamInferenceCost = finiteNumberOrNull(json?.data?.upstream_inference_cost);
-    return upstreamInferenceCost ?? toNumber(json?.data?.total_cost, 0);
-  } catch {
-    return 0;
-  }
-}
-
-async function extractUsageWithCost(response) {
-  const usage = extractUsage(response);
-  if (usage.cost === 0 && response?.id) {
-    usage.cost = await fetchGenerationCost(response.id);
-  }
-  return usage;
 }
 
 function summarizeAttempts(attempts) {
@@ -759,7 +817,7 @@ function solvePuzzle(puzzle, index, total) {
   const expectedSanLine = uciLineToSan(expectedLine, promptContext.currentFen);
   const userPrompt = createUserPrompt(puzzle);
   const body = buildCompletionBody({
-    modelId,
+    modelId: apiModelId,
     systemPrompt: SYSTEM_PROMPT,
     userPrompt,
   });
@@ -778,7 +836,7 @@ function solvePuzzle(puzzle, index, total) {
         if (parsed.parsedLine) break;
 
         const repairBody = buildCompletionBody({
-          modelId,
+          modelId: apiModelId,
           systemPrompt: SYSTEM_PROMPT,
           userPrompt: buildRepairPrompt(userPrompt, puzzle.requiredPlies),
         });
@@ -909,18 +967,25 @@ async function runPool(tasks, concurrency, onTaskCompleted = null) {
 }
 
 async function main() {
-  assert(openrouterApiKey, "Missing OPENROUTER_API_KEY.");
+  assert(apiKey, `Missing ${apiProvider.apiKeyEnv}.`);
   assert(modelId, "Missing BENCH_MODEL_ID.");
+  assert(apiModelId, "Missing API model id.");
   assert(Number.isFinite(MAX_TOKENS) && MAX_TOKENS > 0, "MAX_TOKENS must be > 0.");
+  apiClient = new OpenAI({
+    apiKey,
+    baseURL: apiBaseURL,
+    maxRetries: 0,
+    timeout: benchConfig.requestTimeoutMs ?? 120000,
+  });
   const modelDisplayName = displayModelName(modelId);
 
-  modelSupportedParams = await loadSupportedParameters(modelId);
+  modelSupportedParams = await loadSupportedParameters(apiModelId);
 
   const useTemp = modelSupportedParams.has("temperature");
   useReasoning = modelSupportedParams.has("reasoning");
 
   console.log(`Temperature: ${useTemp ? "0 (supported)" : "not set (unsupported)"}`);
-  console.log(`Reasoning: ${useReasoning ? `effort="${REASONING_EFFORT}", max_tokens=${MAX_TOKENS_REASONING}` : "not supported by model"}`);
+  console.log(`Reasoning: ${useReasoning ? `effort="${reasoningEffort}", max_tokens=${MAX_TOKENS_REASONING}` : "not supported by model"}`);
 
   const datasetRaw = await readFile(DATASET_PATH, "utf8");
   const dataset = JSON.parse(datasetRaw);
@@ -953,7 +1018,7 @@ async function main() {
       `${modelId}|${datasetId}|${runStart}`
     )}`;
   const runCreatedAt = checkpoint?.createdAt ?? new Date().toISOString();
-  const provider = "openrouter";
+  const provider = apiProvider.id;
 
   if (resumedAttempts.length > 0) {
     console.log(
@@ -979,11 +1044,13 @@ async function main() {
       config: {
         temperature: useTemp ? 0 : null,
         maxTokens: useReasoning ? MAX_TOKENS_REASONING : MAX_TOKENS,
-        reasoning: useReasoning ? { effort: REASONING_EFFORT } : null,
+        reasoning: useReasoning ? { effort: reasoningEffort } : null,
         retries: RETRIES,
         concurrency: CONCURRENCY,
         limit: null,
         datasetPath: path.relative(process.cwd(), DATASET_PATH),
+        apiProvider: apiProvider.id,
+        apiModelId,
       },
       progress: {
         completed: attempts.length,
@@ -1027,11 +1094,13 @@ async function main() {
     config: {
       temperature: useTemp ? 0 : null,
       maxTokens: useReasoning ? MAX_TOKENS_REASONING : MAX_TOKENS,
-      reasoning: useReasoning ? { effort: REASONING_EFFORT } : null,
+      reasoning: useReasoning ? { effort: reasoningEffort } : null,
       retries: RETRIES,
       concurrency: CONCURRENCY,
       limit: null,
       datasetPath: path.relative(process.cwd(), DATASET_PATH),
+      apiProvider: apiProvider.id,
+      apiModelId,
     },
     summary,
     attempts: mergedAttempts,
@@ -1063,11 +1132,25 @@ async function main() {
 
 async function bootstrap() {
   loadBenchEnv();
-  openrouterApiKey = envString("OPENROUTER_API_KEY");
+  apiProvider = resolveApiProvider(benchConfig.apiProvider || envTrimmed("BENCH_API_PROVIDER"));
+  apiBaseURL =
+    benchConfig.apiBaseUrl ||
+    envTrimmed("BENCH_API_BASE_URL") ||
+    apiProvider.baseURL;
+  apiKey = envString(apiProvider.apiKeyEnv);
   // config.ts takes priority; env vars are a fallback for CI / scripting
   modelId = benchConfig.modelId || envString("BENCH_MODEL_ID");
+  apiModelId = benchConfig.apiModelId || envTrimmed("BENCH_API_MODEL_ID") || modelId;
   modelName = benchConfig.modelName || envTrimmed("BENCH_MODEL_NAME");
+  reasoningEffort =
+    benchConfig.reasoningEffort ||
+    envTrimmed("BENCH_REASONING_EFFORT") ||
+    apiProvider.defaultReasoningEffort;
+  console.log(`Provider: ${apiProvider.label} (${apiBaseURL})`);
   console.log(`Model: ${modelId} (${modelName})`);
+  if (apiModelId !== modelId) {
+    console.log(`API model: ${apiModelId}`);
+  }
   await main();
 }
 

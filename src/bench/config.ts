@@ -1,6 +1,18 @@
 export type BenchmarkConfig = {
+  /**
+   * Public model id used in ChessBench results and routes.
+   */
   modelId: string;
+  /**
+   * API model slug. Leave undefined when the public id is also the provider slug.
+   */
+  apiModelId?: string;
   modelName: string;
+  apiProvider?: "openrouter" | "sakana";
+  apiBaseUrl?: string;
+  reasoningEffort?: string;
+  supportedParams?: string[];
+  requestTimeoutMs?: number;
   /**
    * Forces OpenRouter to route through a specific provider (uses your BYOK key for that provider).
    * Required if you have BYOK set up and want to avoid OpenRouter shared credits.
@@ -19,9 +31,11 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  modelId: "z-ai/glm-5.2",
-  modelName: "GLM 5.2",
-  providerOrder: ["z-ai/fp8"],
+  apiProvider: "sakana",
+  modelId: "sakana/fugu",
+  apiModelId: "fugu",
+  modelName: "Fugu",
+  reasoningEffort: "high",
 };
 
 export default config;

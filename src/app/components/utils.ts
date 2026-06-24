@@ -80,23 +80,24 @@ export function getModelLogoPath(modelId: string): string | null {
   const provider = modelId.split('/')[0];
   
   const logoMap: Record<string, string> = {
-    'x-ai': 'xai',
-    'google': 'google',
-    'openai': 'openai',
-    'anthropic': 'anthropic',
-    'mistralai': 'mistral',
-    'nex-agi': 'deepseek',
-    'deepseek': 'deepseek',
-    'xiaomi': 'ai2-color',
-    'allenai': 'ai2-color',
-    'z-ai': 'zai',
-    'qwen': 'qwen',
+    'x-ai': 'xai.svg',
+    'google': 'google.svg',
+    'openai': 'openai.svg',
+    'anthropic': 'anthropic.svg',
+    'mistralai': 'mistral.svg',
+    'nex-agi': 'deepseek.svg',
+    'deepseek': 'deepseek.svg',
+    'xiaomi': 'ai2-color.svg',
+    'allenai': 'ai2-color.svg',
+    'z-ai': 'zai.svg',
+    'qwen': 'qwen.svg',
+    'sakana': 'sakana.png',
   };
   
-  const logoName = logoMap[provider];
-  if (!logoName) return null;
+  const logoFile = logoMap[provider];
+  if (!logoFile) return null;
   
-  return `/model_icons/${logoName}.svg`;
+  return `/model_icons/${logoFile}`;
 }
 
 // Friendly display names for model providers / labs.
@@ -112,6 +113,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   'allenai': 'AllenAI',
   'z-ai': 'Z.ai',
   'qwen': 'Qwen',
+  'sakana': 'Sakana AI',
   'nvidia': 'NVIDIA',
   'bytedance-seed': 'ByteDance',
   'stepfun': 'StepFun',

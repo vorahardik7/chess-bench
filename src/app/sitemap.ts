@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next';
 import { getLatestResults } from './lib/results';
-import { getModelRoute, getSiteUrl } from './lib/site';
+import { getSiteUrl } from './lib/site';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const siteUrl = getSiteUrl();
@@ -26,11 +26,5 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'weekly',
       priority: 0.8,
     },
-    ...results.models.map((model) => ({
-      url: `${siteUrl}${getModelRoute(model.id)}`,
-      lastModified: model.updatedAt ?? latestUpdatedAt,
-      changeFrequency: 'weekly' as const,
-      priority: 0.7,
-    })),
   ];
 }

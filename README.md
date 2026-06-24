@@ -20,17 +20,21 @@ Set your model in `src/bench/config.ts`:
 
 ```ts
 const config = {
-  modelId: "anthropic/claude-sonnet-4.6",
-  modelName: "Claude Sonnet 4.6",
-  providerOrder: ["Anthropic"],
+  apiProvider: "sakana",
+  modelId: "sakana/fugu-ultra",
+  apiModelId: "fugu-ultra",
+  modelName: "Fugu Ultra",
+  reasoningEffort: "high",
 };
 ```
 
 Then run:
 
 ```bash
-OPENROUTER_API_KEY=your_key_here pnpm run bench:run
+SAKANA_API_KEY=your_key_here pnpm run bench:run
 ```
+
+For OpenRouter runs, set `apiProvider: "openrouter"` and use `OPENROUTER_API_KEY`.
 
 Start the UI:
 
@@ -55,6 +59,7 @@ Notes:
 - If model supports reasoning, benchmark enables it automatically.
 - If a response has no valid final move line, benchmark does one short repair call asking for move-only output.
 - Interrupted runs auto-resume from an in-progress checkpoint for the same model + dataset.
+- Sakana runs leave `usage.cost` as `0`; add the billed cost manually afterward if needed.
 
 ## Outputs
 
@@ -62,4 +67,4 @@ Notes:
 - Runs: `src/bench/results/<model>/...benchmark.json`
 - Prompt template: `src/bench/prompt.ts`
 
-`BENCH_MODEL_ID` and `BENCH_MODEL_NAME` env vars can still be used as fallback/override for scripting.
+`BENCH_API_PROVIDER`, `BENCH_MODEL_ID`, `BENCH_API_MODEL_ID`, `BENCH_MODEL_NAME`, and `BENCH_REASONING_EFFORT` env vars can still be used as fallbacks for scripting.

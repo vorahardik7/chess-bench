@@ -7,7 +7,6 @@ import {
   formatDate,
   formatInteger,
   formatTrackLabel,
-  getModelRoute,
   getTrackDescription,
   toAbsoluteUrl,
 } from '../lib/site';
@@ -138,7 +137,7 @@ export default async function DatasetPage() {
                 against the expected move sequence, which keeps comparisons strict and reproducible across providers.
               </p>
               <p>
-                ChessBench also records parse status, latency, token usage, and repair behavior, so benchmark pages can
+                ChessBench also records parse status, latency, token usage, and repair behavior, so benchmark results can
                 explain whether a miss came from reasoning, formatting, or parsing.
               </p>
             </div>
@@ -173,7 +172,7 @@ export default async function DatasetPage() {
         </section>
 
         <section className="mt-8 rounded-[24px] border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
-          <h2 className="text-2xl font-bold tracking-tight">Sources and benchmark pages</h2>
+          <h2 className="text-2xl font-bold tracking-tight">Sources and benchmark data</h2>
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--background)] p-4">
               <h3 className="text-lg font-semibold">Public sources</h3>
@@ -203,16 +202,18 @@ export default async function DatasetPage() {
               </ul>
             </div>
             <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--background)] p-4">
-              <h3 className="text-lg font-semibold">Model result pages</h3>
+              <h3 className="text-lg font-semibold">Benchmark explorer</h3>
               <ul className="mt-3 space-y-2 text-sm leading-7" style={{ color: 'var(--text-secondary)' }}>
-                {results.models.slice(0, 5).map((model) => (
-                  <li key={model.id}>
-                    <Link href={getModelRoute(model.id)} className="text-[var(--accent)] underline underline-offset-4">
-                      {model.name} benchmark page
-                    </Link>{' '}
-                    with {model.score.toFixed(1)}% strict accuracy.
-                  </li>
-                ))}
+                <li>
+                  <Link href="/" className="text-[var(--accent)] underline underline-offset-4">
+                    ChessBench explorer
+                  </Link>{' '}
+                  contains model scores, puzzle outcomes, token usage, latency, and raw responses.
+                </li>
+                <li>
+                  The current benchmark view includes {formatInteger(results.models.length)} models across{' '}
+                  {formatInteger(results.puzzles.length)} fixed puzzles.
+                </li>
               </ul>
             </div>
           </div>
