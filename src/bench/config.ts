@@ -31,11 +31,12 @@ export type BenchmarkConfig = {
 };
 
 const config: BenchmarkConfig = {
-  apiProvider: "sakana",
-  modelId: "sakana/fugu",
-  apiModelId: "fugu",
-  modelName: "Fugu",
-  reasoningEffort: "high",
+  apiProvider: "openrouter",
+  modelId: "anthropic/claude-sonnet-5",
+  // apiModelId: "claude-sonnet-5",
+  modelName: "Claude Sonnet 5",
+  reasoningEffort: "medium",
+  providerOrder: ["anthropic"]
 };
 
 export default config;
