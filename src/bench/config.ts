@@ -32,11 +32,11 @@ export type BenchmarkConfig = {
 
 const config: BenchmarkConfig = {
   apiProvider: "openrouter",
-  modelId: "x-ai/grok-build-0.1",
+  modelId: "anthropic/claude-fable-5",
   // apiModelId: "claude-sonnet-5",
-  modelName: "Grok Build 0.1",
-  reasoningEffort: "medium",
-  providerOrder: ["xai"]
+  modelName: "Claude Fable 5 (high)",
+  reasoningEffort: "high",
+  providerOrder: ["anthropic"]
 };
 
 export default config;
