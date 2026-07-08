@@ -32,9 +32,9 @@ export type BenchmarkConfig = {
 
 const config: BenchmarkConfig = {
   apiProvider: "openrouter",
-  modelId: "x-ai/grok-4.5",
+  modelId: "x-ai/grok-build-0.1",
   // apiModelId: "claude-sonnet-5",
-  modelName: "Grok 4.5",
+  modelName: "Grok Build 0.1",
   reasoningEffort: "medium",
   providerOrder: ["xai"]
 };
