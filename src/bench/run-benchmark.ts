@@ -53,6 +53,8 @@ let apiBaseURL = "";
 let apiClient = null;
 let apiProvider = API_PROVIDERS.openrouter;
 let modelId = "";
+let baseModelId = "";
+let variantId = "";
 let apiModelId = "";
 let modelName = "";
 let modelSupportedParams = new Set();
@@ -85,6 +87,13 @@ function delay(ms) {
 
 function sanitizeModelId(modelId) {
   return modelId.replace(/[^a-zA-Z0-9._-]+/g, "__");
+}
+
+function resolveResultsModelId(baseId, variant) {
+  const base = String(baseId || "").trim();
+  const suffix = String(variant || "").trim();
+  if (!base) return "";
+  return suffix ? `${base}-${suffix}` : base;
 }
 
 function inProgressPath(modelResultsDir, datasetId) {
@@ -1051,6 +1060,7 @@ async function main() {
         datasetPath: path.relative(process.cwd(), DATASET_PATH),
         apiProvider: apiProvider.id,
         apiModelId,
+        variantId: variantId || null,
       },
       progress: {
         completed: attempts.length,
@@ -1101,6 +1111,7 @@ async function main() {
       datasetPath: path.relative(process.cwd(), DATASET_PATH),
       apiProvider: apiProvider.id,
       apiModelId,
+      variantId: variantId || null,
     },
     summary,
     attempts: mergedAttempts,
@@ -1139,8 +1150,10 @@ async function bootstrap() {
     apiProvider.baseURL;
   apiKey = envString(apiProvider.apiKeyEnv);
   // config.ts takes priority; env vars are a fallback for CI / scripting
-  modelId = benchConfig.modelId || envString("BENCH_MODEL_ID");
-  apiModelId = benchConfig.apiModelId || envTrimmed("BENCH_API_MODEL_ID") || modelId;
+  baseModelId = benchConfig.modelId || envString("BENCH_MODEL_ID");
+  variantId = benchConfig.variantId || envTrimmed("BENCH_VARIANT_ID") || "";
+  modelId = resolveResultsModelId(baseModelId, variantId);
+  apiModelId = benchConfig.apiModelId || envTrimmed("BENCH_API_MODEL_ID") || baseModelId;
   modelName = benchConfig.modelName || envTrimmed("BENCH_MODEL_NAME");
   reasoningEffort =
     benchConfig.reasoningEffort ||
@@ -1148,7 +1161,10 @@ async function bootstrap() {
     apiProvider.defaultReasoningEffort;
   console.log(`Provider: ${apiProvider.label} (${apiBaseURL})`);
   console.log(`Model: ${modelId} (${modelName})`);
-  if (apiModelId !== modelId) {
+  if (variantId) {
+    console.log(`Variant: ${variantId} (base model ${baseModelId})`);
+  }
+  if (apiModelId !== baseModelId) {
     console.log(`API model: ${apiModelId}`);
   }
   await main();

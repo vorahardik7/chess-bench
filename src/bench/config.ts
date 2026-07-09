@@ -1,12 +1,18 @@
 export type BenchmarkConfig = {
   /**
-   * Public model id used in ChessBench results and routes.
+   * Base model id / API slug (e.g. OpenRouter model id).
+   * When variantId is set, results are saved under `${modelId}-${variantId}`.
    */
   modelId: string;
   /**
    * API model slug. Leave undefined when the public id is also the provider slug.
    */
   apiModelId?: string;
+  /**
+   * Optional suffix for the public results id when running the same base model
+   * under different settings (e.g. reasoning effort). Saved as `${modelId}-${variantId}`.
+   */
+  variantId?: string;
   modelName: string;
   apiProvider?: "openrouter" | "sakana";
   apiBaseUrl?: string;
@@ -32,11 +38,11 @@ export type BenchmarkConfig = {
 
 const config: BenchmarkConfig = {
   apiProvider: "openrouter",
-  modelId: "openai/gpt-5.6-sol",
-  // apiModelId: "claude-sonnet-5",
-  modelName: "GPT-5.6 Sol (high)",
-  reasoningEffort: "high",
-  providerOrder: ["openai"]
+  modelId: "openai/gpt-5.6-terra",
+  variantId: "xhigh",
+  modelName: "GPT-5.6 Terra (xhigh)",
+  reasoningEffort: "xhigh",
+  providerOrder: ["openai"],
 };
 
 export default config;

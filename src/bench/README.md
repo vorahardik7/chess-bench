@@ -22,9 +22,14 @@ For OpenRouter runs, set `apiProvider: "openrouter"` in `src/bench/config.ts` an
 Env fallbacks (optional):
 - `BENCH_API_PROVIDER`
 - `BENCH_MODEL_ID`
+- `BENCH_VARIANT_ID`
 - `BENCH_API_MODEL_ID`
 - `BENCH_MODEL_NAME`
 - `BENCH_REASONING_EFFORT`
+
+Use `variantId` when benchmarking the same base model under different settings
+(for example `reasoningEffort: "medium"` vs `"high"`). Results are saved under
+`${modelId}-${variantId}` so each run appears separately on the leaderboard.
 
 Interrupted runs auto-resume on the next `bench:run` for the same model + dataset.
 

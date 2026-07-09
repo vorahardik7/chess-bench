@@ -67,4 +67,4 @@ Notes:
 - Runs: `src/bench/results/<model>/...benchmark.json`
 - Prompt template: `src/bench/prompt.ts`
 
-`BENCH_API_PROVIDER`, `BENCH_MODEL_ID`, `BENCH_API_MODEL_ID`, `BENCH_MODEL_NAME`, and `BENCH_REASONING_EFFORT` env vars can still be used as fallbacks for scripting.
+`BENCH_API_PROVIDER`, `BENCH_MODEL_ID`, `BENCH_VARIANT_ID`, `BENCH_API_MODEL_ID`, `BENCH_MODEL_NAME`, and `BENCH_REASONING_EFFORT` env vars can still be used as fallbacks for scripting.
