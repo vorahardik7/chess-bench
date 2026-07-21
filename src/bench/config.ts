@@ -39,9 +39,9 @@ export type BenchmarkConfig = {
 const config: BenchmarkConfig = {
   apiProvider: "openrouter",
   modelId: "google/gemini-3.6-flash",
-  variantId: "medium",
-  modelName: "Gemini 3.6 Flash (medium)",
-  reasoningEffort: "medium",
+  variantId: "high",
+  modelName: "Gemini 3.6 Flash (high)",
+  reasoningEffort: "high",
   providerOrder: ["google-ai-studio"],
 };
 
