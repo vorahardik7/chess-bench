@@ -38,11 +38,11 @@ export type BenchmarkConfig = {
 
 const config: BenchmarkConfig = {
   apiProvider: "openrouter",
-  modelId: "anthropic/claude-fable-5.1",
-  variantId: "medium",
-  modelName: "Claude Fable 5.1",
-  reasoningEffort: "medium",
-  providerOrder: ["anthropic"],
+  modelId: "openai/gpt-6-astra",
+  variantId: "xhigh",
+  modelName: "GPT-6 Astra",
+  reasoningEffort: "xhigh",
+  providerOrder: ["openai/flex"],
 };
 
 export default config;
