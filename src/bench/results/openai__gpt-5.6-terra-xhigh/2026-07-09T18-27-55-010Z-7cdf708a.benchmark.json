@@ -4,7 +4,7 @@
   "createdAt": "2026-07-09T18:37:40.652Z",
   "datasetId": "lichess-6df9cced576f",
   "modelId": "openai/gpt-5.6-terra-xhigh",
-  "modelName": "GPT-5.6 Terra (xhigh)",
+  "modelName": "GPT-5.6 Terra [xhigh]",
   "benchmarkLabel": null,
   "provider": "openrouter",
   "promptFile": "src/bench/prompt.ts",

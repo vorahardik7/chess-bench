@@ -4,7 +4,7 @@
   "createdAt": "2026-08-25T01:40:13.198Z",
   "datasetId": "lichess-6df9cced576f",
   "modelId": "google/gemini-3.7-flash-medium",
-  "modelName": "Gemini 3.7 Flash",
+  "modelName": "Gemini 3.7 Flash [medium]",
   "benchmarkLabel": null,
   "provider": "openrouter",
   "promptFile": "src/bench/prompt.ts",

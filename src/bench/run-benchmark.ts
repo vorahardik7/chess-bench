@@ -15,10 +15,10 @@ const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const SAKANA_BASE_URL = "https://api.sakana.ai/v1";
 const DATASET_PATH = path.resolve(process.cwd(), "src/bench/data/puzzles.json");
 const RESULTS_DIR = path.resolve(process.cwd(), "src/bench/results");
-const MAX_TOKENS = 200;
-const MAX_TOKENS_REASONING = 4096;
+const MAX_TOKENS = 400;
+const MAX_TOKENS_REASONING = 16384;
 const REASONING_EFFORT = "medium";
-const MISSING_OUTPUT_RETRY_ATTEMPTS = 1;
+const MISSING_OUTPUT_RETRY_ATTEMPTS = 0;
 const RETRIES = 4;
 const RETRY_BASE_MS = 1200;
 const STORE_RAW_RESPONSE = false;
@@ -666,7 +666,7 @@ function buildCompletionBody({ modelId, systemPrompt, userPrompt }) {
     };
   }
   if (modelSupportedParams.has("temperature")) {
-    body.temperature = 0;
+    body.temperature = benchConfig.temperature ?? 0;
   }
   if (useReasoning) {
     body.reasoning = { effort: reasoningEffort };
@@ -991,9 +991,10 @@ async function main() {
   modelSupportedParams = await loadSupportedParameters(apiModelId);
 
   const useTemp = modelSupportedParams.has("temperature");
+  const temperature = useTemp ? (benchConfig.temperature ?? 0) : null;
   useReasoning = modelSupportedParams.has("reasoning");
 
-  console.log(`Temperature: ${useTemp ? "0 (supported)" : "not set (unsupported)"}`);
+  console.log(`Temperature: ${useTemp ? `${temperature} (supported)` : "not set (unsupported)"}`);
   console.log(`Reasoning: ${useReasoning ? `effort="${reasoningEffort}", max_tokens=${MAX_TOKENS_REASONING}` : "not supported by model"}`);
 
   const datasetRaw = await readFile(DATASET_PATH, "utf8");
@@ -1051,7 +1052,7 @@ async function main() {
       provider,
       promptFile: path.relative(process.cwd(), path.resolve(process.cwd(), "src/bench/prompt.ts")),
       config: {
-        temperature: useTemp ? 0 : null,
+        temperature,
         maxTokens: useReasoning ? MAX_TOKENS_REASONING : MAX_TOKENS,
         reasoning: useReasoning ? { effort: reasoningEffort } : null,
         retries: RETRIES,
@@ -1102,7 +1103,7 @@ async function main() {
     provider,
     promptFile: path.relative(process.cwd(), path.resolve(process.cwd(), "src/bench/prompt.ts")),
     config: {
-      temperature: useTemp ? 0 : null,
+      temperature,
       maxTokens: useReasoning ? MAX_TOKENS_REASONING : MAX_TOKENS,
       reasoning: useReasoning ? { effort: reasoningEffort } : null,
       retries: RETRIES,

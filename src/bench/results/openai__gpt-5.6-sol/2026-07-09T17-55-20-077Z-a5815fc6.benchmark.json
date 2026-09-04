@@ -4,7 +4,7 @@
   "createdAt": "2026-07-09T18:09:03.751Z",
   "datasetId": "lichess-6df9cced576f",
   "modelId": "openai/gpt-5.6-sol",
-  "modelName": "GPT-5.6 Sol (high)",
+  "modelName": "GPT-5.6 Sol [high]",
   "benchmarkLabel": null,
   "provider": "openrouter",
   "promptFile": "src/bench/prompt.ts",

@@ -4,7 +4,7 @@
   "createdAt": "2026-09-04T21:47:57.737Z",
   "datasetId": "lichess-6df9cced576f",
   "modelId": "openai/gpt-6-astra-medium",
-  "modelName": "GPT-6 Astra",
+  "modelName": "GPT-6 Astra [medium]",
   "benchmarkLabel": null,
   "provider": "openrouter",
   "promptFile": "src/bench/prompt.ts",

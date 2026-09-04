@@ -17,6 +17,8 @@ export type BenchmarkConfig = {
   apiProvider?: "openrouter" | "sakana";
   apiBaseUrl?: string;
   reasoningEffort?: string;
+  /** Sampling temperature; defaults to 0 when supported by the model. */
+  temperature?: number;
   supportedParams?: string[];
   requestTimeoutMs?: number;
   /**
@@ -38,11 +40,12 @@ export type BenchmarkConfig = {
 
 const config: BenchmarkConfig = {
   apiProvider: "openrouter",
-  modelId: "openai/gpt-6-astra",
-  variantId: "xhigh",
-  modelName: "GPT-6 Astra",
-  reasoningEffort: "xhigh",
-  providerOrder: ["openai/flex"],
+  modelId: "google/gemini-3.8-flash",
+  variantId: "high",
+  modelName: "Gemini 3.8 Flash [high]",
+  reasoningEffort: "high",
+  temperature: 1,
+  providerOrder: ["google-ai-studio"],
 };
 
 export default config;

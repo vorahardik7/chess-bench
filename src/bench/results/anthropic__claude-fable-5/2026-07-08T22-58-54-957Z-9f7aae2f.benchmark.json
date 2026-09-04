@@ -4,7 +4,7 @@
   "createdAt": "2026-07-08T23:07:02.429Z",
   "datasetId": "lichess-6df9cced576f",
   "modelId": "anthropic/claude-fable-5-high",
-  "modelName": "Claude Fable 5 (high)",
+  "modelName": "Claude Fable 5 [high]",
   "benchmarkLabel": null,
   "provider": "openrouter",
   "promptFile": "src/bench/prompt.ts",
