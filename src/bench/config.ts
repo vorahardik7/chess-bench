@@ -40,12 +40,11 @@ export type BenchmarkConfig = {
 
 const config: BenchmarkConfig = {
   apiProvider: "openrouter",
-  modelId: "google/gemini-3.8-flash",
+  modelId: "anthropic/claude-fable-5.1",
   variantId: "high",
-  modelName: "Gemini 3.8 Flash [high]",
+  modelName: "Claude Fable 5.1 [high]",
   reasoningEffort: "high",
-  temperature: 1,
-  providerOrder: ["google-ai-studio"],
+  providerOrder: ["anthropic"],
 };
 
 export default config;
