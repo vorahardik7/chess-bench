@@ -40,11 +40,11 @@ export type BenchmarkConfig = {
 
 const config: BenchmarkConfig = {
   apiProvider: "openrouter",
-  modelId: "anthropic/claude-fable-5.1",
-  variantId: "high",
-  modelName: "Claude Fable 5.1 [high]",
-  reasoningEffort: "high",
-  providerOrder: ["anthropic"],
+  modelId: "meta/muse-spark-1.3-contributor",
+  variantId: "medium",
+  modelName: "Muse Spark 1.3 [medium]",
+  reasoningEffort: "medium",
+  providerOrder: ["meta"],
 };
 
 export default config;
