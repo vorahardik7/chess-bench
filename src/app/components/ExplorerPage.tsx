@@ -48,7 +48,7 @@ export default async function ExplorerPage() {
                 alt="ChessBench logo"
                 fill
                 sizes="36px"
-                className="object-contain scale-110 p-0.5"
+                className="object-contain p-0.5"
                 priority
               />
             </div>
