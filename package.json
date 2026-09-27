@@ -11,27 +11,27 @@
     "bench:run": "node --import tsx src/bench/run-benchmark.ts"
   },
   "dependencies": {
-    "@lichess-org/chessground": "^10.1.0",
+    "@lichess-org/chessground": "^10.2.0",
     "@vercel/analytics": "^2.0.1",
     "chess.js": "^1.4.0",
-    "lucide-react": "^0.577.0",
-    "motion": "^12.38.0",
-    "next": "16.2.1",
-    "openai": "^6.44.0",
-    "react": "19.2.4",
-    "react-dom": "19.2.4",
-    "recharts": "^3.8.0"
+    "lucide-react": "^1.47.0",
+    "motion": "^13.4.0",
+    "next": "16.3.6",
+    "openai": "^7.21.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "recharts": "^3.10.1"
   },
   "devDependencies": {
-    "@next/env": "^16.2.1",
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.1",
-    "tailwindcss": "^4",
-    "tsx": "^4.21.0",
-    "typescript": "^5"
+    "@next/env": "^16.3.6",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^24.13.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "16.3.6",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
   }
 }

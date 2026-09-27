@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   Trophy,
   BarChart3,
+  ChartScatter,
   ChevronDown,
   ChevronUp,
   Check,
@@ -23,9 +24,11 @@ import {
   Tooltip,
   LabelList,
   Rectangle,
+  ScatterChart,
+  Scatter,
 } from 'recharts';
 import type { BarShapeProps } from 'recharts';
-import { getModelLogoPath, getProviderLabel, getModelProvider } from './utils';
+import { getModelLogoPath, getModelLogoClass, getProviderLabel, getModelProvider } from './utils';
 import type { ExplorerResults } from '../lib/results.types';
 type BenchModel = {
   id: string;
@@ -34,22 +37,28 @@ type BenchModel = {
   breakdown?: Record<string, number>;
 };
 
-const CHART_COLORS = {
-  primary: '#2563eb',
-  success: '#16a34a',
-  info: '#3b82f6',
-  warning: '#d97706',
-  purple: '#7c3aed',
-};
-
-const OVERALL_BAR_RADIUS: [number, number, number, number] = [6, 6, 0, 0];
+const OVERALL_BAR_RADIUS: [number, number, number, number] = [4, 4, 0, 0];
+const DEFAULT_CHART_MODELS = 10;
 
 function overallScoreBarShape(props: BarShapeProps) {
-  const fill =
-    props.index === 0
-      ? CHART_COLORS.primary
-      : `rgba(37, 99, 235, ${0.85 - props.index * 0.06})`;
-  return <Rectangle {...props} fill={fill} radius={OVERALL_BAR_RADIUS} />;
+  return (
+    <Rectangle
+      {...props}
+      className={props.index === 0 ? 'chart-bar-top' : 'chart-bar'}
+      fillOpacity={props.index === 0 ? 1 : 0.72 - props.index * 0.05}
+      radius={OVERALL_BAR_RADIUS}
+    />
+  );
+}
+
+const RANK_COLORS = ['var(--accent)', 'var(--rank-2)', 'var(--rank-3)'];
+
+function trackCellStyle(value: number) {
+  const pct = 4 + (Math.max(0, Math.min(100, value)) / 100) * 26;
+  return {
+    background: `color-mix(in srgb, var(--accent) ${pct.toFixed(1)}%, transparent)`,
+    color: value >= 60 ? 'var(--text-primary)' : 'var(--text-secondary)',
+  };
 }
 
 type SortDir = 'asc' | 'desc';
@@ -78,11 +87,13 @@ function MultiSelectDropdown({
   selected,
   options,
   onChange,
+  totalCount,
   label = 'Filter models',
 }: {
   selected: Set<string>;
   options: { id: string; label: string }[];
   onChange: (selected: Set<string>) => void;
+  totalCount: number;
   label?: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -94,6 +105,7 @@ function MultiSelectDropdown({
     function handleClickOutside(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setIsOpen(false);
+        setQuery('');
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -101,11 +113,9 @@ function MultiSelectDropdown({
   }, []);
 
   useEffect(() => {
-    if (isOpen) {
-      const id = window.setTimeout(() => searchInputRef.current?.focus(), 0);
-      return () => window.clearTimeout(id);
-    }
-    setQuery('');
+    if (!isOpen) return;
+    const id = window.setTimeout(() => searchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(id);
   }, [isOpen]);
 
   const toggleItem = (id: string) => {
@@ -187,22 +197,32 @@ function MultiSelectDropdown({
     <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+        onClick={() => {
+          if (isOpen) setQuery('');
+          setIsOpen(!isOpen);
+        }}
+        className="flex h-9 items-center gap-2 px-3 rounded-lg text-[13px] font-medium transition-colors hover:border-[var(--text-tertiary)]"
         style={{
-          background: 'var(--surface)',
-          border: '1px solid var(--border)',
-          color: 'var(--text-secondary)',
+          background: 'var(--surface-raised)',
+          border: `1px solid ${isOpen ? 'var(--accent-border)' : 'var(--border-strong)'}`,
+          color: 'var(--text-primary)',
         }}
       >
-        <Filter className="w-3.5 h-3.5" />
+        <Filter className="h-4 w-4" style={{ color: 'var(--text-secondary)' }} />
         <span>{label}</span>
-        <span className="px-1.5 py-0.5 rounded text-[10px]" style={{ background: 'var(--border-subtle)', color: 'var(--text-tertiary)' }}>
-          {selected.size}/{options.length}
+        <span
+          className="px-1.5 py-0.5 rounded font-mono text-[11px] font-semibold"
+          style={
+            selected.size < totalCount
+              ? { background: 'var(--accent-light)', color: 'var(--accent)' }
+              : { background: 'var(--border)', color: 'var(--text-secondary)' }
+          }
+        >
+          {selected.size}/{totalCount}
         </span>
         <ChevronDown
-          className={`w-3.5 h-3.5 transition-transform ${isOpen ? 'rotate-180' : ''}`}
-          style={{ color: 'var(--text-tertiary)' }}
+          className={`h-4 w-4 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+          style={{ color: 'var(--text-secondary)' }}
         />
       </button>
 
@@ -333,7 +353,7 @@ function MultiSelectDropdown({
                           border: isChecked ? '1px solid var(--accent)' : '1px solid var(--border)',
                         }}
                       >
-                        {isChecked && <Check className="w-3 h-3 text-white" />}
+                        {isChecked && <Check className="w-3 h-3" style={{ color: 'var(--on-accent)' }} />}
                       </div>
                       {logoPath && (
                         <Image
@@ -341,8 +361,7 @@ function MultiSelectDropdown({
                           alt=""
                           width={16}
                           height={16}
-                          className="w-4 h-4 shrink-0"
-                          style={{ opacity: 0.7 }}
+                          className={`h-4 w-4 shrink-0 ${getModelLogoClass(logoPath)}`}
                           unoptimized
                         />
                       )}
@@ -375,18 +394,11 @@ function LabChip({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors"
-      style={{
-        background: active ? 'var(--accent)' : 'var(--border-subtle)',
-        color: active ? '#ffffff' : 'var(--text-secondary)',
-        border: `1px solid ${active ? 'var(--accent)' : 'transparent'}`,
-      }}
-      onMouseEnter={(e) => {
-        if (!active) e.currentTarget.style.background = 'var(--accent-light)';
-      }}
-      onMouseLeave={(e) => {
-        if (!active) e.currentTarget.style.background = 'var(--border-subtle)';
-      }}
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors border ${
+        active
+          ? 'bg-[var(--accent-light)] border-[var(--accent-border)] text-[var(--accent)]'
+          : 'bg-[var(--border-subtle)] border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+      }`}
     >
       {logo && (
         <Image
@@ -394,8 +406,7 @@ function LabChip({
           alt=""
           width={12}
           height={12}
-          className="w-3 h-3"
-          style={{ opacity: active ? 1 : 0.7 }}
+          className={`h-3 w-3 ${getModelLogoClass(logo)}`}
           unoptimized
         />
       )}
@@ -419,7 +430,7 @@ function CustomTooltip({
 }) {
   if (!active || !payload || payload.length === 0) return null;
   return (
-    <div className="rounded-lg px-4 py-3 shadow-lg" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+    <div className="rounded-lg px-4 py-3" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-pop)' }}>
       <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>{label}</div>
       <div className="space-y-1">
         {payload.map((p, idx: number) => (
@@ -427,7 +438,7 @@ function CustomTooltip({
             <div className="flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
               <span
                 className="inline-block h-3 w-3 rounded-sm"
-                style={{ background: p.color ?? '#a3a3a3' }}
+                style={{ background: 'var(--accent)' }}
               />
               <span>{p.name}</span>
             </div>
@@ -460,7 +471,8 @@ function CustomLabel(props: {
     <text
       x={xn + wn / 2}
       y={yn - 8}
-      fill="#5a6070"
+      className="chart-text"
+      style={{ fontFamily: 'var(--font-app-mono)' }}
       textAnchor="middle"
       fontSize={11}
       fontWeight={600}
@@ -498,14 +510,14 @@ function createCustomXAxisTick(nameToIdMap: Map<string, string>) {
               y={-7}
               width={14}
               height={14}
-              style={{ opacity: 0.7 }}
+              className={getModelLogoClass(logoPath)}
             />
           )}
           <text
             x={logoPath ? -4 : 0}
             y={0}
             dy={16}
-            fill="#5a6070"
+            className="chart-text"
             fontSize={11}
             textAnchor="end"
           >
@@ -515,6 +527,80 @@ function createCustomXAxisTick(nameToIdMap: Map<string, string>) {
       </g>
     );
   };
+}
+
+type ChartTab = 'leaderboard' | 'overall' | 'value';
+
+// ============================================================================
+// COST VS ACCURACY
+// ============================================================================
+type ValuePoint = { id: string; name: string; cost: number; score: number; onFrontier: boolean };
+
+// A model is on the frontier when no cheaper model scores at least as well.
+function splitByFrontier(points: Omit<ValuePoint, 'onFrontier'>[]): ValuePoint[] {
+  const byCost = [...points].sort((a, b) => a.cost - b.cost || b.score - a.score);
+  let best = -Infinity;
+  return byCost.map((p) => {
+    const onFrontier = p.score > best;
+    if (onFrontier) best = p.score;
+    return { ...p, onFrontier };
+  });
+}
+
+function costTicks(min: number, max: number): number[] {
+  const out: number[] = [];
+  for (let exp = Math.floor(Math.log10(min)); exp <= Math.ceil(Math.log10(max)); exp += 1) {
+    for (const m of [1, 3]) {
+      const v = m * 10 ** exp;
+      if (v >= min && v <= max) out.push(v);
+    }
+  }
+  return out;
+}
+
+function formatCostTick(v: number) {
+  if (v >= 1) return `$${v.toFixed(0)}`;
+  return `$${v.toFixed(v >= 0.1 ? 1 : 2)}`;
+}
+
+function ValueDot(props: { cx?: number; cy?: number; payload?: ValuePoint }) {
+  const { cx, cy, payload } = props;
+  if (typeof cx !== 'number' || typeof cy !== 'number' || !payload) return <g />;
+  if (!payload.onFrontier) {
+    return <circle cx={cx} cy={cy} r={4.5} className="value-dot" />;
+  }
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={6.5} className="value-dot-frontier" />
+      <text x={cx + 10} y={cy - 8} fontSize={11} fontWeight={600} className="chart-label">
+        {payload.name}
+      </text>
+    </g>
+  );
+}
+
+function ValueTooltip({ active, payload }: { active?: boolean; payload?: { payload?: ValuePoint }[] }) {
+  const point = payload?.[0]?.payload;
+  if (!active || !point) return null;
+  return (
+    <div
+      className="rounded-lg px-3.5 py-2.5 text-sm"
+      style={{ background: 'var(--surface-raised)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-pop)' }}
+    >
+      <div className="font-semibold" style={{ color: 'var(--text-primary)' }}>{point.name}</div>
+      <div className="mt-1.5 grid grid-cols-[auto_auto] gap-x-4 gap-y-0.5 font-mono text-xs">
+        <span style={{ color: 'var(--text-tertiary)' }}>Accuracy</span>
+        <span className="text-right" style={{ color: 'var(--text-primary)' }}>{point.score.toFixed(1)}%</span>
+        <span style={{ color: 'var(--text-tertiary)' }}>Total cost</span>
+        <span className="text-right" style={{ color: 'var(--text-primary)' }}>${point.cost.toFixed(4)}</span>
+      </div>
+      {point.onFrontier && (
+        <div className="mt-2 text-xs font-medium" style={{ color: 'var(--accent)' }}>
+          Best accuracy at this price or lower
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ============================================================================
@@ -539,11 +625,17 @@ export default function BenchmarksTab({
     () => results.puzzles.map((puzzle) => ({ level: puzzle.level })),
     [results.puzzles]
   );
-  const [activeTab, setActiveTab] = useState<'leaderboard' | 'overall'>('leaderboard');
-  const [selectedModels, setSelectedModels] = useState<Set<string>>(
-    () => new Set(results.models.map((model) => model.id))
-  );
-  const [searchQuery, setSearchQuery] = useState('');
+  const [activeTab, setActiveTab] = useState<ChartTab>('leaderboard');
+  const [selectedByTab, setSelectedByTab] = useState<Record<ChartTab, Set<string>>>(() => {
+    const byScore = [...results.models].sort((a, b) => b.score - a.score).map((model) => model.id);
+    const topTen = byScore.slice(0, DEFAULT_CHART_MODELS);
+    return { leaderboard: new Set(byScore), overall: new Set(topTen), value: new Set(topTen) };
+  });
+  const [queryByTab, setQueryByTab] = useState<Record<ChartTab, string>>({ leaderboard: '', overall: '', value: '' });
+  const selectedModels = selectedByTab[activeTab];
+  const searchQuery = queryByTab[activeTab];
+  const setSelectedModels = (next: Set<string>) => setSelectedByTab((prev) => ({ ...prev, [activeTab]: next }));
+  const setSearchQuery = (next: string) => setQueryByTab((prev) => ({ ...prev, [activeTab]: next }));
   const [sortKey, setSortKey] = useState<SortKey>('score');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
@@ -579,6 +671,30 @@ export default function BenchmarksTab({
     }));
   }, [modelsByScore]);
 
+  const valueData = useMemo(() => {
+    const points = modelsByScore.flatMap((m) => {
+      const cost = results.models.find((r) => r.id === m.id)?.summary.totalCost;
+      return typeof cost === 'number' && cost > 0 ? [{ id: m.id, name: m.name, cost, score: m.score }] : [];
+    });
+    const all = splitByFrontier(points);
+    const costs = all.map((p) => p.cost);
+    const yMin = all.length ? Math.max(0, Math.floor((Math.min(...all.map((p) => p.score)) - 5) / 10) * 10) : 0;
+    const domain: [number, number] = costs.length
+      ? [Math.min(...costs) / 1.4, Math.max(...costs) * 1.4]
+      : [0.01, 1];
+    return {
+      frontier: all.filter((p) => p.onFrontier),
+      others: all.filter((p) => !p.onFrontier),
+      domain,
+      ticks: costTicks(domain[0], domain[1]),
+      yTicks: Array.from(
+        { length: 11 - yMin / 10 },
+        (_, i) => yMin + i * 10
+      ),
+      yMin,
+    };
+  }, [modelsByScore, results.models]);
+
   const costByModel = useMemo(() => {
     return new Map(
       results.models.map((model) => [
@@ -608,6 +724,7 @@ export default function BenchmarksTab({
   const tabs = [
     { key: 'leaderboard', label: 'Leaderboard', icon: Trophy },
     { key: 'overall', label: 'Overall', icon: BarChart3 },
+    { key: 'value', label: 'Cost vs accuracy', icon: ChartScatter },
   ] as const;
 
   const trackIds = useMemo(() => {
@@ -726,52 +843,71 @@ export default function BenchmarksTab({
       >
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-5">
           <div>
-            <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>Benchmarks</div>
-            <div className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+            <h2 className="text-xl font-semibold leading-tight tracking-[-0.02em]" style={{ color: 'var(--text-primary)' }}>
+              {activeTab === 'leaderboard' ? 'Standings' : activeTab === 'overall' ? 'Overall accuracy' : 'Cost vs accuracy'}
+            </h2>
+            <div className="mt-1 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
               {activeTab === 'leaderboard'
-                ? 'Sortable leaderboard across models'
-                : 'Visual comparison across models'}
+                ? 'Every model, ranked by exact-line accuracy'
+                : activeTab === 'overall'
+                  ? 'Share of puzzles each selected model solved'
+                  : 'Total run cost against accuracy for each selected model'}
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search models..."
-              className="px-3 py-2 rounded-lg text-xs flex-1 min-w-[160px] sm:flex-none sm:min-w-[220px]"
-              style={{
-                background: 'var(--surface)',
-                border: '1px solid var(--border)',
-                color: 'var(--text-primary)',
-              }}
-            />
-            {/* Model filter dropdown */}
+            <div className="relative flex-1 min-w-[160px] sm:flex-none sm:min-w-[220px]">
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2"
+                style={{ color: 'var(--text-secondary)' }}
+              />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search models..."
+                aria-label="Search models"
+                className="h-9 w-full rounded-lg pl-9 pr-3 text-[13px] transition-colors placeholder:text-[var(--text-secondary)] hover:border-[var(--text-tertiary)] focus:border-[var(--accent-border)] focus:outline-none"
+                style={{
+                  background: 'var(--surface-raised)',
+                  border: '1px solid var(--border-strong)',
+                  color: 'var(--text-primary)',
+                }}
+              />
+            </div>
             <MultiSelectDropdown
+              key={activeTab}
               selected={selectedModels}
               options={modelFilterOptions}
               onChange={setSelectedModels}
+              totalCount={models.length}
               label="Filter models"
             />
 
-            {/* Tabs as compact segment control */}
-            <div className="flex rounded-lg p-0.5 gap-0.5" style={{ background: 'var(--border-subtle)' }}>
+            <div
+              className="flex h-9 items-center rounded-lg p-1 gap-0.5"
+              style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-strong)' }}
+            >
               {tabs.map((tab) => {
                 const Icon = tab.icon;
+                const isActive = activeTab === tab.key;
                 return (
                   <button
                     key={tab.key}
                     type="button"
                     onClick={() => setActiveTab(tab.key)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all"
+                    aria-pressed={isActive}
+                    className={`flex h-full items-center gap-1.5 rounded-md px-3 text-[13px] font-medium transition-colors ${
+                      isActive ? '' : 'hover:bg-[var(--row-hover)] hover:text-[var(--text-primary)]'
+                    }`}
                     style={{
-                      background: activeTab === tab.key ? 'var(--surface)' : 'transparent',
-                      color: activeTab === tab.key ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                      boxShadow: activeTab === tab.key ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+                      background: isActive ? 'var(--accent-light)' : 'transparent',
+                      boxShadow: isActive ? 'inset 0 0 0 1px var(--accent-border)' : undefined,
+                      color: isActive ? 'var(--accent)' : 'var(--text-secondary)',
+                      fontWeight: isActive ? 600 : 500,
                     }}
                   >
-                    <Icon className="w-3 h-3" />
+                    <Icon className="h-3.5 w-3.5" />
                     {tab.label}
                   </button>
                 );
@@ -785,31 +921,40 @@ export default function BenchmarksTab({
           <div className="w-full">
             {leaderboardModels.length === 0 ? (
               <div className="h-[320px] flex items-center justify-center text-sm" style={{ color: 'var(--text-tertiary)' }}>
-                No benchmarks yet. Keep building the table layout, then plug data in later.
+                No models match this search or filter.
               </div>
             ) : (
               <div className="rounded-lg overflow-hidden" style={{ border: '1px solid var(--border)' }}>
-                <div className="flex items-center justify-between gap-4 px-4 py-2.5" style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--border-subtle)' }}>
+                <div className="flex items-center justify-between gap-4 px-4 py-2.5" style={{ borderBottom: '1px solid var(--border)', background: 'var(--background)' }}>
                   <div className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
                     <span style={{ color: 'var(--text-primary)' }} className="font-semibold">{leaderboardModels.length}</span> models
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-[11px] px-2 py-1 rounded-md font-mono" style={{ color: 'var(--text-secondary)', background: '#eef2f7' }}>
-                      Total Cost: {selectedCostTotals.totalCost.toFixed(4)}
+                    <span
+                      className="inline-flex items-baseline gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider"
+                      style={{ background: 'var(--accent-light)', border: '1px solid var(--accent-border)', color: 'var(--text-secondary)' }}
+                    >
+                      Total cost
+                      <span className="font-mono text-[13px] font-semibold normal-case tracking-normal" style={{ color: 'var(--accent)' }}>
+                        ${selectedCostTotals.totalCost.toFixed(2)}
+                      </span>
                     </span>
-                    <span className="text-[11px] px-2 py-1 rounded-md font-mono hidden sm:inline-block" style={{ color: 'var(--text-secondary)', background: '#eef2f7' }}>
-                      Total Tokens: {selectedCostTotals.totalTokens.toLocaleString()}
+                    <span
+                      className="hidden sm:inline-flex items-baseline gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider"
+                      style={{ background: 'var(--accent-light)', border: '1px solid var(--accent-border)', color: 'var(--text-secondary)' }}
+                    >
+                      Total tokens
+                      <span className="font-mono text-[13px] font-semibold normal-case tracking-normal" style={{ color: 'var(--accent)' }}>
+                        {selectedCostTotals.totalTokens.toLocaleString()}
+                      </span>
                     </span>
-                    <div className="text-[11px] hidden lg:block" style={{ color: 'var(--text-tertiary)' }}>
-                      Click headers to sort
-                    </div>
                   </div>
                 </div>
 
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse">
                     <thead>
-                      <tr className="text-[11px] uppercase tracking-wider" style={{ color: '#64748b', background: '#f1f3f6', borderBottom: '2px solid var(--border)' }}>
+                      <tr className="text-[12.5px] uppercase tracking-[0.06em] [&_th]:py-3 [&_button:hover]:text-[var(--text-primary)]" style={{ color: 'var(--text-secondary)', background: 'var(--surface-raised)', borderBottom: '1px solid var(--border)' }}>
                         <th className="px-4 py-2.5 text-left font-semibold w-[60px]">Rank</th>
                         <th className="px-4 py-2.5 text-left font-semibold">
                           <button
@@ -844,7 +989,7 @@ export default function BenchmarksTab({
                             </button>
                           </th>
                         ))}
-                        <th className="px-4 py-2.5 text-right font-semibold hidden lg:table-cell">
+                        <th className="px-4 py-2.5 text-right font-semibold hidden lg:table-cell" style={{ background: 'var(--column-highlight)', color: 'var(--accent)' }}>
                           <button
                             type="button"
                             onClick={() => toggleSort('totalCost')}
@@ -854,7 +999,7 @@ export default function BenchmarksTab({
                             <SortIcon active={sortKey === 'totalCost'} dir={sortDir} />
                           </button>
                         </th>
-                        <th className="px-4 py-2.5 text-right font-semibold hidden lg:table-cell">
+                        <th className="px-4 py-2.5 text-right font-semibold hidden lg:table-cell" style={{ background: 'var(--column-highlight)', color: 'var(--accent)' }}>
                           <button
                             type="button"
                             onClick={() => toggleSort('totalTokens')}
@@ -869,65 +1014,71 @@ export default function BenchmarksTab({
                     <tbody>
                       {leaderboardModels.map((model, idx) => {
                         const modelCost = costByModel.get(model.id);
-                        const rankColor =
-                          idx === 0
-                            ? '#b45309'
-                            : idx === 1
-                              ? '#475569'
-                              : idx === 2
-                                ? '#92400e'
-                                : '#94a3b8';
+                        const rankColor = RANK_COLORS[idx] ?? 'var(--text-tertiary)';
+                        const logoPath = getModelLogoPath(model.id);
                         return (
                           <tr
                             key={model.id}
-                            className="transition-colors"
-                            style={{
-                              borderTop: '1px solid var(--border-subtle)',
-                              background: idx % 2 === 0 ? '#ffffff' : '#f8f9fb',
-                            }}
-                            onMouseEnter={(e) => { e.currentTarget.style.background = '#eef2f7'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.background = idx % 2 === 0 ? '#ffffff' : '#f8f9fb'; }}
+                            className="transition-colors even:bg-[var(--row-alt)] hover:bg-[var(--row-hover)]"
+                            style={{ borderTop: '1px solid var(--border-subtle)' }}
                           >
                             <td className="px-4 py-3">
-                              <div className="font-mono text-sm font-bold" style={{ color: rankColor }}>#{idx + 1}</div>
+                              <div className="font-mono text-sm font-semibold tabular-nums" style={{ color: rankColor }}>
+                                {String(idx + 1).padStart(2, '0')}
+                              </div>
                             </td>
                             <td className="px-4 py-3">
-                              <div className="flex items-center gap-2">
-                                {getModelLogoPath(model.id) && (
+                              <div className="flex items-center gap-2.5">
+                                {logoPath && (
                                   <Image
-                                    src={getModelLogoPath(model.id)!}
+                                    src={logoPath}
                                     alt=""
                                     width={16}
                                     height={16}
-                                    className="w-4 h-4 flex-shrink-0 mr-1"
-                                    style={{ opacity: 0.7 }}
+                                    className={`h-4 w-4 flex-shrink-0 ${getModelLogoClass(logoPath)}`}
                                     unoptimized
                                   />
                                 )}
                                 <div className="min-w-0">
-                                  <div className="font-medium truncate max-w-[420px]" style={{ color: 'var(--text-primary)' }}>
+                                  <div className="text-sm font-medium truncate max-w-[420px]" style={{ color: 'var(--text-primary)' }}>
                                     {model.name}
                                   </div>
                                 </div>
                               </div>
                             </td>
                             <td className="px-4 py-3 text-right">
-                              <div className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{model.score.toFixed(1)}%</div>
-                            </td>
-                            {trackIds.map((trackId) => (
-                              <td key={trackId} className="px-4 py-3 text-right hidden md:table-cell">
-                                <span className="inline-flex items-center justify-end px-2 py-0.5 rounded-md text-xs font-semibold" style={{ background: '#eef2f7', color: '#334155' }}>
-                                  {model.breakdown?.[trackId] ?? 0}%
+                              <div className="flex items-center justify-end gap-3">
+                                <div className="hidden sm:block h-1 w-16 overflow-hidden rounded-full" style={{ background: 'var(--border)' }}>
+                                  <div
+                                    className="h-full rounded-full"
+                                    style={{
+                                      width: `${Math.max(0, Math.min(100, model.score))}%`,
+                                      background: idx === 0 ? 'var(--accent-strong)' : 'var(--accent)',
+                                    }}
+                                  />
+                                </div>
+                                <span className="w-14 font-mono text-sm font-semibold tabular-nums" style={{ color: idx < 3 ? 'var(--accent)' : 'var(--text-primary)' }}>
+                                  {model.score.toFixed(1)}%
                                 </span>
-                              </td>
-                            ))}
-                            <td className="px-4 py-3 text-right hidden lg:table-cell">
-                              <div className="font-mono text-sm" style={{ color: 'var(--text-secondary)' }}>
-                                {typeof modelCost?.totalCost === 'number' ? modelCost.totalCost.toFixed(4) : '—'}
                               </div>
                             </td>
-                            <td className="px-4 py-3 text-right hidden lg:table-cell">
-                              <div className="font-mono text-sm" style={{ color: 'var(--text-secondary)' }}>
+                            {trackIds.map((trackId) => {
+                              const value = model.breakdown?.[trackId] ?? 0;
+                              return (
+                                <td key={trackId} className="px-3 py-3 text-right hidden md:table-cell">
+                                  <span className="inline-flex min-w-[3.25rem] justify-center rounded px-2 py-0.5 font-mono text-xs tabular-nums" style={trackCellStyle(value)}>
+                                    {value}%
+                                  </span>
+                                </td>
+                              );
+                            })}
+                            <td className="px-4 py-3 text-right hidden lg:table-cell" style={{ background: 'var(--column-highlight)' }}>
+                              <div className="font-mono text-[13px] font-medium tabular-nums" style={{ color: 'var(--accent)' }}>
+                                {typeof modelCost?.totalCost === 'number' ? `$${modelCost.totalCost.toFixed(4)}` : '—'}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-right hidden lg:table-cell" style={{ background: 'var(--column-highlight)' }}>
+                              <div className="font-mono text-[13px] font-medium tabular-nums" style={{ color: 'var(--text-primary)' }}>
                                 {typeof modelCost?.totalCompletionTokens === 'number' && typeof modelCost?.totalPromptTokens === 'number'
                                   ? (modelCost.totalPromptTokens + modelCost.totalCompletionTokens).toLocaleString()
                                   : '—'}
@@ -944,40 +1095,63 @@ export default function BenchmarksTab({
           </div>
         )}
 
+        {activeTab === 'value' && valueData.frontier.length > 0 && (
+          <div className="mb-2 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
+            <span className="inline-flex items-center gap-2">
+              <svg width="28" height="10" aria-hidden="true">
+                <line x1="0" y1="5" x2="28" y2="5" className="frontier-line" />
+                <circle cx="14" cy="5" r="4" className="value-dot-frontier" />
+              </svg>
+              Best value: no cheaper selected model scores higher
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <svg width="10" height="10" aria-hidden="true">
+                <circle cx="5" cy="5" r="3.5" className="value-dot" />
+              </svg>
+              Other selected models (hover for details)
+            </span>
+          </div>
+        )}
+
         {activeTab !== 'leaderboard' && (
-          <div className="w-full h-[400px]">
+          <div className="w-full overflow-x-auto">
+          <div
+            className="h-[min(70dvh,700px)] min-h-[420px] w-full"
+            style={{ minWidth: activeTab === 'overall' ? Math.max(640, overallData.length * 64) : 640 }}
+          >
           {overallData.length === 0 ? (
             <div className="h-full flex items-center justify-center text-sm" style={{ color: 'var(--text-tertiary)' }}>
-              No benchmark scores yet. Charts will appear here once results are loaded.
+              No models selected. Use the filter to pick models to chart.
             </div>
           ) : (
             <>
               {activeTab === 'overall' && (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={overallData} margin={{ top: 30, right: 20, left: 20, bottom: 80 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
+                  <BarChart data={overallData} margin={{ top: 28, right: 16, left: 28, bottom: 4 }} barCategoryGap="24%">
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis
                       dataKey="name"
                       // eslint-disable-next-line @typescript-eslint/no-explicit-any
                       tick={CustomXAxisTickWithLogo as any}
-                      axisLine={{ stroke: 'rgba(0,0,0,0.1)' }}
                       tickLine={false}
                       interval={0}
-                      height={80}
+                      height={136}
                     />
                     <YAxis
+                      width={48}
                       domain={[0, 100]}
-                      tick={{ fill: '#5a6070', fontSize: 11 }}
-                      axisLine={{ stroke: 'rgba(0,0,0,0.1)' }}
+                      ticks={[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]}
+                      interval={0}
+                      tick={{ fontSize: 11 }}
                       tickLine={false}
                       tickFormatter={(v) => `${v}%`}
                     />
-                    <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.03)' }} />
+                    <Tooltip content={<CustomTooltip />} />
                     <Bar
                       dataKey="score"
                       name="Score (%)"
                       radius={OVERALL_BAR_RADIUS}
-                      maxBarSize={50}
+                      maxBarSize={72}
                       shape={overallScoreBarShape}
                     >
                       {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
@@ -987,14 +1161,62 @@ export default function BenchmarksTab({
                 </ResponsiveContainer>
               )}
 
+              {activeTab === 'value' && (
+                <ResponsiveContainer width="100%" height="100%">
+                  <ScatterChart margin={{ top: 24, right: 110, left: 8, bottom: 24 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis
+                      type="number"
+                      dataKey="cost"
+                      name="Total cost"
+                      scale="log"
+                      domain={valueData.domain}
+                      ticks={valueData.ticks}
+                      tickFormatter={formatCostTick}
+                      tick={{ fontSize: 11 }}
+                      tickLine={false}
+                      allowDataOverflow
+                      label={{ value: 'Total cost to run the benchmark (log scale)', position: 'insideBottom', offset: -16, className: 'chart-text', fontSize: 11 }}
+                    />
+                    <YAxis
+                      type="number"
+                      dataKey="score"
+                      name="Accuracy"
+                      width={48}
+                      domain={[valueData.yMin, 100]}
+                      ticks={valueData.yTicks}
+                      interval={0}
+                      tick={{ fontSize: 11 }}
+                      tickLine={false}
+                      tickFormatter={(v) => `${v}%`}
+                    />
+                    <Tooltip content={<ValueTooltip />} cursor={{ strokeDasharray: '3 3' }} />
+                    <Scatter data={valueData.others} shape={ValueDot} isAnimationActive={false} />
+                    <Scatter
+                      data={valueData.frontier}
+                      shape={ValueDot}
+                      line={{ className: 'frontier-line' }}
+                      isAnimationActive={false}
+                    />
+                  </ScatterChart>
+                </ResponsiveContainer>
+              )}
             </>
           )}
+          </div>
         </div>
         )}
 
         <div className="mt-4 text-xs text-center" style={{ color: 'var(--text-tertiary)' }}>
-          {activeTab === 'overall' && 'Overall score = average across tested puzzle tracks.'}
-          {activeTab === 'leaderboard' && 'Sort by accuracy and track-level breakdown; includes total cost and total tokens.'}
+          {activeTab === 'overall' &&
+            `Overall score = average across tested puzzle tracks. Showing ${overallData.length} of ${models.length} models; the top ${DEFAULT_CHART_MODELS} are selected by default.`}
+          {activeTab === 'leaderboard' && 'Accuracy counts only exact matches of the expected move line. Track cells are shaded by score.'}
+          {activeTab === 'value' &&
+            `Up and to the left is better. Best value is worked out from the models currently selected.${
+              valueData.frontier.length + valueData.others.length < modelsByScore.length
+                ? ' Models without cost data are left out.'
+                : ''
+            }`}
         </div>
       </section>
     </div>

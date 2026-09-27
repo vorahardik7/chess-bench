@@ -87,17 +87,28 @@ export function getModelLogoPath(modelId: string): string | null {
     'mistralai': 'mistral.svg',
     'nex-agi': 'deepseek.svg',
     'deepseek': 'deepseek.svg',
-    'xiaomi': 'ai2-color.svg',
+    'xiaomi': 'xiaomimimo.svg',
     'allenai': 'ai2-color.svg',
     'z-ai': 'zai.svg',
     'qwen': 'qwen.svg',
     'sakana': 'sakana.png',
+    'meta': 'meta.svg',
+    'meta-llama': 'meta.svg',
+    'nvidia': 'nvidia-nemotron.svg',
   };
   
   const logoFile = logoMap[provider];
   if (!logoFile) return null;
   
   return `/model_icons/${logoFile}`;
+}
+
+// Single-color black logos that need tinting to stay visible on the dark theme.
+const MONOCHROME_LOGOS = new Set(['openai.svg', 'xai.svg', 'zai.svg']);
+
+export function getModelLogoClass(logoPath: string): string {
+  const file = logoPath.split('/').pop() ?? '';
+  return MONOCHROME_LOGOS.has(file) ? 'model-logo-mono' : '';
 }
 
 // Friendly display names for model providers / labs.

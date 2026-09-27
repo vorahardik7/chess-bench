@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import "@lichess-org/chessground/assets/chessground.base.css";
 import "@lichess-org/chessground/assets/chessground.cburnett.css";
@@ -8,16 +8,19 @@ import { Analytics } from "@vercel/analytics/next";
 import { SITE_DESCRIPTION, SITE_NAME, getSiteUrl } from "./lib/site";
 
 const siteUrl = getSiteUrl();
-const inter = Inter({
+const geistSans = Geist({
   subsets: ["latin"],
   display: "swap",
   variable: "--font-app-sans",
 });
-const jetBrainsMono = JetBrains_Mono({
+const geistMono = Geist_Mono({
   subsets: ["latin"],
   display: "swap",
   variable: "--font-app-mono",
 });
+
+// Runs before paint so a saved light preference doesn't flash dark first.
+const THEME_SCRIPT = `try{var t=localStorage.getItem("theme");document.documentElement.dataset.theme=t==="light"?"light":"dark"}catch(e){}try{var tab=new URLSearchParams(location.search).get("tab");if(tab==="benchmark"||tab==="leaderboard"||location.hash==="#benchmarks")document.documentElement.dataset.benchTab="leaderboard"}catch(e){}`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -48,7 +51,10 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#f8f9fb",
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#121110" },
+    { media: "(prefers-color-scheme: light)", color: "#f6f4ef" },
+  ],
 };
 
 export default function RootLayout({
@@ -57,8 +63,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`${inter.variable} ${jetBrainsMono.variable} antialiased`}>
+    <html lang="en" data-theme="dark" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         {children}
         <Analytics />
       </body>

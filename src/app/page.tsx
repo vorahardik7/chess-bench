@@ -14,6 +14,6 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-export default async function Home() {
+export default function Home() {
   return <ExplorerPage />;
 }

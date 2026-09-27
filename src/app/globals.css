@@ -1,27 +1,99 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 :root {
-  --background: #f8f9fb;
-  --foreground: #1a1a2e;
-  --surface: #ffffff;
-  --surface-raised: #ffffff;
-  --border: #e2e5ea;
-  --border-subtle: #eef0f3;
-  --text-primary: #1a1a2e;
-  --text-secondary: #5a6070;
-  --text-tertiary: #8b92a0;
-  --accent: #2563eb;
-  --accent-light: #eff4ff;
-  --success: #15803d;
-  --success-light: #f0fdf4;
-  --danger: #b91c1c;
-  --danger-light: #fef2f2;
-  --warning: #d97706;
-  --warning-light: #fffbeb;
+  color-scheme: dark;
+
+  --background: #121110;
+  --foreground: #ebe5d6;
+  --surface: #1a1917;
+  --surface-raised: #22211e;
+  --border: #33312c;
+  --border-subtle: #262522;
+  --border-strong: #4a463e;
+  --text-primary: #ebe5d6;
+  --text-secondary: #b3ac9e;
+  --text-tertiary: #8d8679;
+  --accent: #d1ad63;
+  --accent-strong: #e8c885;
+  --accent-light: rgba(209, 173, 99, 0.1);
+  --accent-border: rgba(209, 173, 99, 0.38);
+  --on-accent: #16140f;
+  --success: #4fd17c;
+  --success-light: rgba(79, 209, 124, 0.12);
+  --success-border: rgba(79, 209, 124, 0.4);
+  --danger: #ff6b5b;
+  --danger-light: rgba(255, 107, 91, 0.12);
+  --danger-border: rgba(255, 107, 91, 0.4);
+  --warning: #d9a441;
+  --warning-light: rgba(217, 164, 65, 0.12);
+  --row-alt: rgba(255, 248, 230, 0.015);
+  --row-hover: rgba(209, 173, 99, 0.06);
+  --column-highlight: rgba(209, 173, 99, 0.04);
+  --rank-2: #c9ccd1;
+  --rank-3: #c28a5c;
+  --chart-grid: rgba(235, 229, 214, 0.06);
+  --chart-axis: rgba(235, 229, 214, 0.12);
+  --logo-filter: brightness(0) invert(0.86) sepia(0.25);
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5);
+
+  --track-mate1: #7ddc93;
+  --track-mate2: #a3bfe4;
+  --track-fork: #e2c486;
+  --track-pin: #ff8f80;
+  --track-hanging: #94d3ca;
+
+  --board-light: #d8c7a0;
+  --board-dark: #9a7c52;
+
   --font-sans-fallback: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji",
     "Segoe UI Emoji";
   --font-mono-fallback: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
     monospace;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --background: #f6f4ef;
+  --foreground: #1c1a16;
+  --surface: #ffffff;
+  --surface-raised: #faf8f4;
+  --border: #e4dfd4;
+  --border-subtle: #eeeae2;
+  --border-strong: #cdc6b7;
+  --text-primary: #1c1a16;
+  --text-secondary: #5a554b;
+  --text-tertiary: #857f73;
+  --accent: #9a7226;
+  --accent-strong: #b3893a;
+  --accent-light: rgba(154, 114, 38, 0.09);
+  --accent-border: rgba(154, 114, 38, 0.35);
+  --on-accent: #ffffff;
+  --success: #16883e;
+  --success-light: rgba(22, 136, 62, 0.09);
+  --success-border: rgba(22, 136, 62, 0.35);
+  --danger: #cf2f1e;
+  --danger-light: rgba(207, 47, 30, 0.08);
+  --danger-border: rgba(207, 47, 30, 0.35);
+  --warning: #a8741a;
+  --warning-light: rgba(168, 116, 26, 0.1);
+  --row-alt: rgba(28, 26, 22, 0.018);
+  --row-hover: rgba(154, 114, 38, 0.06);
+  --column-highlight: rgba(154, 114, 38, 0.045);
+  --rank-2: #737985;
+  --rank-3: #9a5f33;
+  --chart-grid: rgba(28, 26, 22, 0.07);
+  --chart-axis: rgba(28, 26, 22, 0.14);
+  --logo-filter: brightness(0) invert(0.18);
+  --shadow-pop: 0 12px 32px rgba(28, 26, 22, 0.12);
+
+  --track-mate1: #16883e;
+  --track-mate2: #2f5f9e;
+  --track-fork: #93681c;
+  --track-pin: #cf2f1e;
+  --track-hanging: #1f7a70;
 }
 
 @theme inline {
@@ -30,8 +102,6 @@
   --font-sans: var(--font-app-sans);
   --font-mono: var(--font-app-mono);
 }
-
-
 
 body {
   background: var(--background);
@@ -48,7 +118,11 @@ body {
   overscroll-behavior: none;
 }
 
-/* Better focus rings for keyboard users */
+::selection {
+  background: rgba(209, 173, 99, 0.3);
+  color: var(--text-primary);
+}
+
 :where(button, a, input, textarea, select):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -61,10 +135,132 @@ input[data-seamless]:focus-visible {
   box-shadow: none;
 }
 
-/* Custom scrollbar styles */
+/* Provider logos ship as a mix of black and full-color SVGs; flatten them to one warm tone. */
+.model-logo-mono {
+  filter: var(--logo-filter);
+}
+
+/* Recharts writes colors as SVG attributes; CSS properties take precedence and can use theme vars. */
+.recharts-cartesian-grid line {
+  stroke: var(--chart-grid);
+}
+
+.recharts-cartesian-axis-line {
+  stroke: var(--chart-axis);
+}
+
+.recharts-cartesian-axis-tick-value,
+.chart-text {
+  fill: var(--text-secondary);
+}
+
+.recharts-tooltip-cursor {
+  fill: var(--row-hover);
+  stroke: var(--chart-axis);
+}
+
+.value-dot {
+  fill: var(--text-tertiary);
+  fill-opacity: 0.55;
+  stroke: var(--surface);
+  stroke-width: 1.5;
+}
+
+.value-dot-frontier {
+  fill: var(--accent);
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.frontier-line {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  fill: none;
+}
+
+.chart-label {
+  fill: var(--text-primary);
+}
+
+.chart-bar {
+  fill: var(--accent);
+}
+
+.chart-bar-top {
+  fill: var(--accent-strong);
+}
+
+/* GitHub star button */
+.star-button {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.star-button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, 0.45) 50%, transparent 70%);
+  transform: translateX(-120%);
+  animation: star-shine 4.5s ease-in-out infinite;
+}
+
+.star-button .star-icon {
+  transform-origin: 50% 55%;
+  animation: star-twinkle 4.5s ease-in-out infinite;
+}
+
+.star-button:hover .star-icon {
+  animation: star-spin 0.6s ease-out;
+  fill: currentColor;
+}
+
+@keyframes star-shine {
+  0%,
+  55% {
+    transform: translateX(-120%);
+  }
+  80%,
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes star-twinkle {
+  0%,
+  60%,
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+  68% {
+    transform: scale(1.3) rotate(-15deg);
+  }
+  76% {
+    transform: scale(0.95) rotate(8deg);
+  }
+  84% {
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+@keyframes star-spin {
+  from {
+    transform: scale(1) rotate(0deg);
+  }
+  60% {
+    transform: scale(1.25) rotate(144deg);
+  }
+  to {
+    transform: scale(1) rotate(144deg);
+  }
+}
+
 .custom-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: rgba(0, 0, 0, 0.12) transparent;
+  scrollbar-color: rgba(235, 229, 214, 0.14) transparent;
 }
 
 .custom-scrollbar::-webkit-scrollbar {
@@ -77,16 +273,95 @@ input[data-seamless]:focus-visible {
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.12);
+  background: rgba(235, 229, 214, 0.14);
   border-radius: 3px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(235, 229, 214, 0.24);
 }
 
-/* Override chessground theme for light mode */
+/* Board: walnut and brass squares inside a thin gold frame */
 .cg-wrap-brown {
-  border-radius: 8px;
+  border-radius: 6px;
   overflow: hidden;
+  box-shadow:
+    0 0 0 1px var(--accent-border),
+    0 0 0 5px var(--surface-raised),
+    0 0 0 6px var(--border),
+    var(--shadow-pop);
+}
+
+.cg-wrap-brown cg-board {
+  background-color: var(--board-light);
+  background-image: conic-gradient(
+    var(--board-dark) 0 25%,
+    var(--board-light) 0 50%,
+    var(--board-dark) 0 75%,
+    var(--board-light) 0
+  );
+  background-size: 25% 25%;
+}
+
+.cg-wrap.cg-wrap-brown .cg-shapes {
+  opacity: 0.88;
+}
+
+.cg-wrap-brown cg-board square.last-move {
+  background-color: rgba(232, 200, 133, 0.5);
+}
+
+/* Set from the head script when the URL asks for the leaderboard, so that
+   panel is visible before hydration. Removed once React's view matches. */
+html[data-bench-tab='leaderboard'] #panel-puzzles {
+  display: none !important;
+}
+html[data-bench-tab='leaderboard'] #panel-leaderboard {
+  display: block !important;
+}
+html[data-bench-tab='leaderboard'] #tab-puzzles {
+  background: transparent !important;
+  color: var(--text-secondary) !important;
+  box-shadow: none !important;
+}
+.view-enter {
+  animation: view-enter 180ms ease-out;
+}
+
+.standings-wait {
+  animation: standings-wait 1.4s ease-in-out infinite;
+}
+
+@keyframes view-enter {
+  from {
+    opacity: 0.4;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes standings-wait {
+  0%,
+  100% {
+    opacity: 0.72;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+html[data-bench-tab='leaderboard'] #tab-leaderboard {
+  background: var(--accent) !important;
+  color: var(--on-accent) !important;
+  box-shadow: 0 2px 10px -3px var(--accent) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

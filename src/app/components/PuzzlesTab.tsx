@@ -12,7 +12,7 @@ import {
   Search,
   X,
 } from 'lucide-react';
-import ChessBoard from './ChessBoard';
+import ChessBoard, { ARROW_COLORS } from './ChessBoard';
 import type { DrawShape } from '@lichess-org/chessground/draw';
 import type { Key } from '@lichess-org/chessground/types';
 import type { ExplorerResults, ModelView, PuzzleAttemptView } from '../lib/results.types';
@@ -39,8 +39,8 @@ function InfoTip({ text }: { text: string }) {
       <Info ref={iconRef} className="w-3 h-3 cursor-help" style={{ color: 'var(--text-tertiary)' }} />
       {pos && (
         <span
-          className="fixed w-52 px-2.5 py-1.5 rounded-md text-[11px] leading-snug font-normal z-[9999] shadow-lg pointer-events-none"
-          style={{ background: 'var(--text-primary)', color: 'var(--background)', top: pos.top, left: pos.left }}
+          className="fixed w-52 px-2.5 py-1.5 rounded-md text-[11px] leading-snug font-normal normal-case tracking-normal z-[9999] pointer-events-none"
+          style={{ boxShadow: 'var(--shadow-pop)', background: 'var(--surface-raised)', border: '1px solid var(--border)', color: 'var(--text-primary)', top: pos.top, left: pos.left }}
         >
           {text}
         </span>
@@ -78,22 +78,17 @@ function CustomDropdown({
     function handleClickOutside(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setIsOpen(false);
+        setQuery('');
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Reset the query whenever the dropdown closes, and focus search on open.
   useEffect(() => {
-    if (isOpen) {
-      if (searchable) {
-        const id = window.setTimeout(() => searchInputRef.current?.focus(), 0);
-        return () => window.clearTimeout(id);
-      }
-    } else {
-      setQuery('');
-    }
+    if (!isOpen || !searchable) return;
+    const id = window.setTimeout(() => searchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(id);
   }, [isOpen, searchable]);
 
   const selected = options.find((o) => o.id === value);
@@ -113,7 +108,10 @@ function CustomDropdown({
     <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => {
+          if (isOpen) setQuery('');
+          setIsOpen(!isOpen);
+        }}
         className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg text-left transition-colors"
         style={{
           background: 'var(--surface)',
@@ -196,6 +194,7 @@ function CustomDropdown({
                     onClick={() => {
                       onChange(option.id);
                       setIsOpen(false);
+                      setQuery('');
                     }}
                     className="w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors"
                     style={{
@@ -271,6 +270,13 @@ function formatTrackLabel(level: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function trackBadge(colorVar: string) {
+  return {
+    background: `color-mix(in srgb, var(${colorVar}) 13%, transparent)`,
+    color: `var(${colorVar})`,
+  };
+}
+
 function getPuzzleDescription(level: string, fen: string, requiredPlies: number): string {
   const side = fen.includes(' w ') ? 'White' : 'Black';
   const mateMatch = /^(?:mateIn|mate)(\d+)$/i.exec(level);
@@ -294,6 +300,13 @@ export default function PuzzlesTab({
   const [selectedPuzzleId, setSelectedPuzzleId] = useState<string>('');
   const [selectedModelId, setSelectedModelId] = useState<string>('');
   const [levelFilter, setLevelFilter] = useState<string>('all');
+  const [loadedAttempts, setLoadedAttempts] = useState<Record<string, Record<string, PuzzleAttemptView>>>({});
+
+  const puzzleIndexById = useMemo(() => {
+    const map = new Map<string, number>();
+    visiblePuzzles.forEach((puzzle, index) => map.set(puzzle.id, index));
+    return map;
+  }, [visiblePuzzles]);
 
   const modelOptions = useMemo<ModelOption[]>(
     () =>
@@ -313,7 +326,7 @@ export default function PuzzlesTab({
 
   const levelOptions = useMemo(() => {
     return [
-      { id: 'all', label: 'All Puzzle Types', sublabel: 'Browse every active track' },
+      { id: 'all', label: 'All Puzzle Types'},
       ...availableLevels.map((level) => ({
         id: level,
         label: formatTrackLabel(level),
@@ -362,10 +375,52 @@ export default function PuzzlesTab({
     return models.find((model) => model.id === activeModelId);
   }, [models, activeModelId]);
 
+  const modelAttempts = useMemo(() => {
+    if (!selectedModel) return undefined;
+    if (Object.keys(selectedModel.attemptsByPuzzleId).length > 0) return selectedModel.attemptsByPuzzleId;
+    return loadedAttempts[selectedModel.id];
+  }, [selectedModel, loadedAttempts]);
+
+  useEffect(() => {
+    if (!selectedModel) return;
+    if (Object.keys(selectedModel.attemptsByPuzzleId).length > 0) return;
+    if (loadedAttempts[selectedModel.id]) return;
+    const modelId = selectedModel.id;
+    let cancelled = false;
+    void fetch(`/api/model/${encodeURIComponent(modelId)}/attempts`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { attempts?: Record<string, PuzzleAttemptView> } | null) => {
+        if (cancelled || !data?.attempts) return;
+        setLoadedAttempts((current) => ({ ...current, [modelId]: data.attempts ?? {} }));
+      })
+      .catch(() => {
+        // The list still shows pass/fail from marks. The detail panel can be opened again.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedModel, loadedAttempts]);
+
   const selectedAttempt = useMemo<PuzzleAttemptView | undefined>(() => {
-    if (!selectedPuzzle || !selectedModel) return undefined;
-    return selectedModel.attemptsByPuzzleId[selectedPuzzle.id];
-  }, [selectedPuzzle, selectedModel]);
+    if (!selectedPuzzle || !modelAttempts) return undefined;
+    return modelAttempts[selectedPuzzle.id];
+  }, [selectedPuzzle, modelAttempts]);
+
+  const selectedMark = useMemo(() => {
+    if (!selectedPuzzle || !selectedModel) return null;
+    const index = puzzleIndexById.get(selectedPuzzle.id);
+    if (index === undefined) return null;
+    const mark = selectedModel.marks[index];
+    return mark === '1' || mark === '0' ? mark : null;
+  }, [selectedPuzzle, selectedModel, puzzleIndexById]);
+
+  const selectedCorrect = selectedAttempt
+    ? selectedAttempt.correctStrict
+    : selectedMark === '1'
+      ? true
+      : selectedMark === '0'
+        ? false
+        : null;
 
   const displayFen = useMemo(() => {
     if (!selectedPuzzle?.fen) return '';
@@ -441,36 +496,37 @@ export default function PuzzlesTab({
     let total = 0;
     let correct = 0;
     for (const puzzle of filteredPuzzles) {
-      const attempt = selectedModel.attemptsByPuzzleId[puzzle.id];
-      if (!attempt) continue;
+      const index = puzzleIndexById.get(puzzle.id);
+      const mark = index === undefined ? undefined : selectedModel.marks[index];
+      if (mark !== '1' && mark !== '0') continue;
       total += 1;
-      if (attempt.correctStrict) correct += 1;
+      if (mark === '1') correct += 1;
     }
     const pct = total === 0 ? 0 : (correct / total) * 100;
     return { correct, total, pct: pct.toFixed(1) };
-  }, [filteredPuzzles, selectedModel]);
+  }, [filteredPuzzles, selectedModel, puzzleIndexById]);
 
   const levelBadgeStyle = (level: string) => {
     switch (level) {
       case 'mateIn1':
-      case 'mate1': return { background: '#dcfce7', color: '#166534' };
+      case 'mate1': return trackBadge('--track-mate1');
       case 'mateIn2':
-      case 'mate2': return { background: '#dbeafe', color: '#1e40af' };
-      case 'fork': return { background: '#fef9c3', color: '#854d0e' };
-      case 'pin': return { background: '#fee2e2', color: '#991b1b' };
-      case 'hangingPiece': return { background: '#cffafe', color: '#155e75' };
+      case 'mate2': return trackBadge('--track-mate2');
+      case 'fork': return trackBadge('--track-fork');
+      case 'pin': return trackBadge('--track-pin');
+      case 'hangingPiece': return trackBadge('--track-hanging');
       default: return { background: 'var(--border-subtle)', color: 'var(--text-secondary)' };
     }
   };
 
   return (
     <div
-      className="grid gap-5 sm:gap-6 lg:flex-1 lg:h-full lg:min-h-0 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)] lg:items-stretch"
+      className="grid gap-4 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(240px,280px)_minmax(0,1fr)] xl:grid-cols-[minmax(260px,300px)_minmax(0,1fr)] lg:items-stretch"
     >
       {/* Sidebar */}
-      <aside className="flex flex-col lg:h-full lg:min-h-0">
+      <aside className="flex min-w-0 flex-col lg:h-full lg:min-h-0">
         <div
-          className="flex flex-col rounded-xl overflow-visible lg:flex-1 lg:min-h-0 lg:h-full"
+          className="flex flex-col rounded-xl overflow-visible lg:h-full lg:min-h-0 lg:flex-1"
           style={{
             background: 'var(--surface)',
             border: '1px solid var(--border)',
@@ -519,13 +575,13 @@ export default function PuzzlesTab({
                     {modelStats.correct}/{modelStats.total}
                   </span>{' '}
                   <span
-                    className="ml-1 px-1.5 py-0.5 rounded text-[11px] font-bold"
+                    className="ml-1 rounded px-1.5 py-0.5 text-xs font-bold"
                     style={
                       parseFloat(modelStats.pct) >= 90
-                        ? { background: '#dcfce7', color: '#166534' }
+                        ? { background: 'var(--success-light)', color: 'var(--success)' }
                         : parseFloat(modelStats.pct) >= 70
-                        ? { background: '#fef9c3', color: '#854d0e' }
-                        : { background: '#fee2e2', color: '#991b1b' }
+                        ? { background: 'var(--accent-light)', color: 'var(--accent)' }
+                        : { background: 'var(--danger-light)', color: 'var(--danger)' }
                     }
                   >
                     {modelStats.pct}%
@@ -549,17 +605,15 @@ export default function PuzzlesTab({
                 onChange={setLevelFilter}
                 placeholder="Filter by puzzle type..."
               />
-              <div className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
-                {levelFilter === 'all'
-                  ? 'Showing all puzzle types.'
-                  : getTrackDescription(levelFilter)}
+              <div className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                  {getTrackDescription(levelFilter)}
               </div>
 
-              <div className="flex items-center justify-between text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="flex items-center justify-between text-xs" style={{ color: 'var(--text-tertiary)' }}>
                 <span>
                   <span style={{ color: 'var(--text-primary)' }} className="font-semibold">{filteredPuzzles.length}</span> puzzles
                 </span>
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-medium" style={{ background: 'var(--border-subtle)', color: 'var(--text-secondary)' }}>
+                <span className="px-1.5 py-0.5 rounded text-xs font-medium" style={{ background: 'var(--border-subtle)', color: 'var(--text-secondary)' }}>
                   {filteredPuzzles.length === 0 ? '—' : `${selectedIndex + 1} / ${filteredPuzzles.length}`}
                 </span>
               </div>
@@ -568,7 +622,7 @@ export default function PuzzlesTab({
 
           <div className="relative flex flex-col lg:flex-1 lg:min-h-0">
             <div
-              className="overflow-y-auto overflow-x-hidden px-2 py-2 custom-scrollbar max-h-[40vh] lg:max-h-none lg:absolute lg:inset-0"
+              className="custom-scrollbar max-h-48 overflow-x-hidden overflow-y-auto px-2 py-2 sm:max-h-64 lg:absolute lg:inset-0 lg:max-h-none"
             >
               {filteredPuzzles.length === 0 ? (
                 <div className="p-6 text-sm text-center italic" style={{ color: 'var(--text-tertiary)' }}>No puzzles match your filters.</div>
@@ -576,27 +630,29 @@ export default function PuzzlesTab({
                 <div className="space-y-0.5">
                   {filteredPuzzles.map((puzzle, idx) => {
                     const active = activePuzzleId === puzzle.id;
-                    const attempt = selectedModel?.attemptsByPuzzleId[puzzle.id];
-                    const dotColor = attempt ? (attempt.correctStrict ? '#22c55e' : '#ef4444') : '#d1d5db';
+                    const markIndex = puzzleIndexById.get(puzzle.id);
+                    const mark = markIndex === undefined ? undefined : selectedModel?.marks[markIndex];
+                    const dotColor = mark === '1' ? 'var(--success)' : mark === '0' ? 'var(--danger)' : 'var(--border)';
                     return (
                       <button
                         key={puzzle.id}
                         type="button"
                         onClick={() => setSelectedPuzzleId(puzzle.id)}
-                        className="w-full text-left rounded-lg px-2.5 py-1.5 transition-all"
-                        style={{
-                          background: active ? 'var(--accent-light)' : 'transparent',
-                          border: active ? '1px solid #bfdbfe' : '1px solid transparent',
-                        }}
+                        aria-current={active ? 'true' : undefined}
+                        className={`w-full text-left rounded-md px-2.5 py-2 transition-colors border ${
+                          active
+                            ? 'bg-[var(--accent-light)] border-[var(--accent-border)]'
+                            : 'border-transparent hover:bg-[var(--surface-raised)]'
+                        }`}
                       >
                         <div className="flex items-center gap-2">
                           <div className="min-w-0 flex items-center gap-2">
                             <div className="w-2 h-2 rounded-full shrink-0" style={{ background: dotColor }} />
-                            <span className="text-xs font-semibold tabular-nums" style={{ color: active ? 'var(--accent)' : 'var(--text-secondary)' }}>
+                            <span className="text-sm font-semibold tabular-nums" style={{ color: active ? 'var(--accent)' : 'var(--text-secondary)' }}>
                               #{idx + 1}
                             </span>
                             <span
-                              className="text-[10px] font-semibold px-1.5 py-0.5 rounded truncate"
+                              className="text-xs font-semibold px-1.5 py-0.5 rounded truncate"
                               style={levelBadgeStyle(puzzle.level)}
                             >
                               {formatTrackLabel(puzzle.level)}
@@ -614,9 +670,9 @@ export default function PuzzlesTab({
       </aside>
 
       {/* Main panel */}
-      <section className="flex flex-col min-w-0 lg:h-full lg:min-h-0">
+      <section className="flex min-w-0 flex-col lg:h-full lg:min-h-0">
         <div
-          className="flex flex-col rounded-xl overflow-hidden w-full max-w-[1120px] xl:max-w-[1180px] lg:flex-1 lg:min-h-0"
+          className="flex w-full min-w-0 flex-col overflow-hidden rounded-xl lg:min-h-0 lg:flex-1"
           style={{
             background: 'var(--surface)',
             border: '1px solid var(--border)',
@@ -626,12 +682,12 @@ export default function PuzzlesTab({
             <div className="flex items-center justify-between gap-4">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <div className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
+                  <h2 className="text-lg font-semibold leading-none tracking-[-0.015em] mr-1" style={{ color: 'var(--text-primary)' }}>
                     {hasPuzzles ? `Puzzle ${selectedIndex + 1}` : 'Puzzle Explorer'}
-                  </div>
+                  </h2>
                   {selectedPuzzle && (
                     <span
-                      className="text-[10px] font-semibold px-2 py-0.5 rounded inline-flex items-center gap-1"
+                      className="text-xs font-semibold px-2 py-0.5 rounded inline-flex items-center gap-1"
                       style={levelBadgeStyle(selectedPuzzle.level)}
                     >
                       {formatTrackLabel(selectedPuzzle.level)}
@@ -639,19 +695,19 @@ export default function PuzzlesTab({
                     </span>
                   )}
                   {selectedPuzzle?.rating != null && (
-                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded inline-flex items-center gap-1" style={{ background: '#fef3c7', color: '#92400e' }}>
+                    <span className="text-xs font-semibold px-1.5 py-0.5 rounded inline-flex items-center gap-1" style={{ background: 'var(--accent-light)', color: 'var(--accent)' }}>
                       ELO {selectedPuzzle.rating}
                       <InfoTip text="ELO rating measures puzzle difficulty on the Lichess scale. Higher = harder." />
                     </span>
                   )}
                   {selectedPuzzle?.ratingBucket && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1" style={{ background: 'var(--border-subtle)', color: 'var(--text-tertiary)' }}>
+                    <span className="text-xs px-1.5 py-0.5 rounded inline-flex items-center gap-1" style={{ background: 'var(--border-subtle)', color: 'var(--text-tertiary)' }}>
                       {selectedPuzzle.ratingBucket}
                       <InfoTip text="Rating bucket groups puzzles by difficulty range for balanced benchmarking." />
                     </span>
                   )}
                 </div>
-                <div className="mt-1 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                <div className="mt-1 text-sm" style={{ color: 'var(--text-secondary)' }}>
                   {selectedPuzzle
                     ? getPuzzleDescription(selectedPuzzle.level, displayFen, selectedPuzzle.requiredPlies ?? 1)
                     : 'Select a puzzle from the sidebar to explore board positions and model analysis.'}
@@ -660,7 +716,7 @@ export default function PuzzlesTab({
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 xl:p-6 custom-scrollbar">
+          <div className="custom-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto p-3 sm:p-4 lg:overflow-hidden lg:p-4">
             {!selectedPuzzle ? (
               <div className="flex h-full items-center justify-center">
                 <div className="text-center max-w-xs px-6">
@@ -674,10 +730,12 @@ export default function PuzzlesTab({
                 </div>
               </div>
             ) : (
-              <div className="grid gap-5 lg:justify-center lg:grid-cols-[max-content_minmax(340px,380px)] xl:grid-cols-[max-content_minmax(360px,400px)] lg:items-start">
+              <div className="@container/stage flex min-w-0 flex-col lg:h-full lg:min-h-0">
+                <div className="grid items-start gap-4 lg:h-full lg:min-h-0 lg:items-stretch @min-[680px]/stage:grid-cols-[minmax(0,1fr)_minmax(260px,360px)] @min-[1000px]/stage:grid-cols-[minmax(0,1fr)_minmax(280px,400px)]">
                 {/* Board column */}
-                <div className="flex flex-col items-center justify-start">
-                  <div className="w-full max-w-[min(82vw,640px)] lg:w-[min(68vh,640px)] xl:w-[min(70vh,680px)] mx-auto">
+                <div className="flex min-h-0 min-w-0 flex-col">
+                  <div className="@container/board mx-auto flex w-full max-w-[min(100%,68dvh)] flex-1 items-center justify-center lg:max-w-none lg:min-h-0 lg:[container-type:size]">
+                    <div className="aspect-square w-full lg:w-[min(100cqw,100cqh)]">
                     <ChessBoard
                       fen={displayFen}
                       startFen={selectedPuzzle.fen ?? ''}
@@ -686,51 +744,53 @@ export default function PuzzlesTab({
                       lastMove={lastMoveSquares}
                       replayKey={selectedPuzzle.id}
                     />
+                    </div>
                   </div>
-                  <div className="mt-2 w-full max-w-[min(82vw,640px)] lg:w-[min(68vh,640px)] xl:w-[min(70vh,680px)] mx-auto flex items-center gap-4 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                  <div
+                    className="mt-3 flex w-full shrink-0 flex-wrap items-center gap-x-5 gap-y-2 rounded-lg px-3 py-2 text-sm font-medium"
+                    style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+                  >
                     {selectedPuzzle.initialMove && (
-                      <span className="flex items-center gap-1.5">
-                        <span className="w-3 h-1.5 rounded-sm" style={{ background: '#003088' }} />
+                      <span className="flex items-center gap-2">
+                        <span className="h-1 w-6 rounded-full" style={{ background: ARROW_COLORS.lastMove }} />
                         Last move
+                        <span className="rounded px-1.5 py-0.5 font-mono text-xs" style={{ background: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
+                          {selectedPuzzle.initialMove}
+                        </span>
                       </span>
                     )}
-                    <span className="flex items-center gap-1.5">
-                      <span className="w-3 h-1.5 rounded-sm" style={{ background: '#15781B' }} />
+                    <span className="flex items-center gap-2">
+                      <span className="h-1 w-6 rounded-full" style={{ background: ARROW_COLORS.expected }} />
                       Expected
                     </span>
                     {selectedAttempt && !selectedAttempt.correctStrict && selectedAttempt.parsedLine && (
-                      <span className="flex items-center gap-1.5">
-                        <span className="w-3 h-1.5 rounded-sm" style={{ background: '#882020' }} />
+                      <span className="flex items-center gap-2">
+                        <span className="h-1 w-6 rounded-full" style={{ background: ARROW_COLORS.model }} />
                         Model
-                      </span>
-                    )}
-                    {selectedPuzzle.initialMove && (
-                      <span className="ml-auto font-mono">
-                        Last move: {selectedPuzzle.initialMove}
                       </span>
                     )}
                   </div>
                 </div>
 
                 {/* Detail panel */}
-                <div className="rounded-xl overflow-hidden self-start" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                <div className="custom-scrollbar min-w-0 self-start overflow-hidden rounded-xl lg:h-full lg:self-stretch lg:overflow-y-auto" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
                   {/* Verdict banner */}
                   <div
                     className="px-4 py-3 flex items-center justify-between"
                     style={{
-                      background: selectedAttempt?.correctStrict ? '#f0fdf4' : selectedAttempt ? '#fef2f2' : 'var(--border-subtle)',
-                      borderBottom: `2px solid ${selectedAttempt?.correctStrict ? '#86efac' : selectedAttempt ? '#fca5a5' : 'var(--border)'}`,
+                      background: selectedCorrect === true ? 'var(--success-light)' : selectedCorrect === false ? 'var(--danger-light)' : 'var(--border-subtle)',
+                      borderBottom: `1px solid ${selectedCorrect === true ? 'var(--success-border)' : selectedCorrect === false ? 'var(--danger-border)' : 'var(--border)'}`,
                     }}
                   >
                     <div className="flex items-center gap-2">
-                      {selectedAttempt ? (
-                        selectedAttempt.correctStrict ? (
-                          <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ background: '#dcfce7' }}>
-                            <Check className="w-3.5 h-3.5" style={{ color: '#16a34a' }} />
+                      {selectedCorrect !== null ? (
+                        selectedCorrect ? (
+                          <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ border: '1px solid var(--success-border)' }}>
+                            <Check className="w-3.5 h-3.5" style={{ color: 'var(--success)' }} />
                           </div>
                         ) : (
-                          <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ background: '#fee2e2' }}>
-                            <X className="w-3.5 h-3.5" style={{ color: '#dc2626' }} />
+                          <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ border: '1px solid var(--danger-border)' }}>
+                            <X className="w-3.5 h-3.5" style={{ color: 'var(--danger)' }} />
                           </div>
                         )
                       ) : (
@@ -739,9 +799,9 @@ export default function PuzzlesTab({
                         </div>
                       )}
                       <span className="text-sm font-bold" style={{
-                        color: selectedAttempt?.correctStrict ? '#16a34a' : selectedAttempt ? '#dc2626' : 'var(--text-tertiary)',
+                        color: selectedCorrect === true ? 'var(--success)' : selectedCorrect === false ? 'var(--danger)' : 'var(--text-tertiary)',
                       }}>
-                        {selectedAttempt ? (selectedAttempt.correctStrict ? 'Correct' : 'Incorrect') : 'No Data'}
+                        {selectedCorrect === true ? 'Correct' : selectedCorrect === false ? 'Incorrect' : 'No Data'}
                       </span>
                     </div>
                   </div>
@@ -751,37 +811,37 @@ export default function PuzzlesTab({
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <div className="flex items-center gap-1.5 mb-1">
-                          <span className="w-2 h-2 rounded-full" style={{ background: '#15781B' }} />
-                          <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#15781B' }}>
+                          <span className="w-2 h-2 rounded-full" style={{ background: 'var(--success)' }} />
+                          <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--success)' }}>
                             Expected
                           </span>
                         </div>
-                        <div className="font-mono text-[13px] leading-relaxed break-all" style={{ color: 'var(--text-primary)' }}>
+                        <div className="break-all font-mono text-sm leading-relaxed" style={{ color: 'var(--text-primary)' }}>
                           {selectedAttempt?.expectedSanLine || selectedPuzzleExpected || '—'}
                         </div>
                         {selectedAttempt?.expectedSanLine && (
-                          <div className="font-mono text-[10px] mt-0.5 break-all" style={{ color: 'var(--text-tertiary)' }}>
+                          <div className="mt-0.5 break-all font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>
                             {selectedPuzzleExpected}
                           </div>
                         )}
                       </div>
                       <div>
                         <div className="flex items-center gap-1.5 mb-1">
-                          <span className="w-2 h-2 rounded-full" style={{ background: selectedAttempt?.correctStrict ? '#15781B' : '#882020' }} />
-                          <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: selectedAttempt?.correctStrict ? '#15781B' : '#882020' }}>
+                          <span className="w-2 h-2 rounded-full" style={{ background: selectedCorrect === false ? 'var(--danger)' : 'var(--success)' }} />
+                          <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: selectedCorrect === false ? 'var(--danger)' : 'var(--success)' }}>
                             Model
                           </span>
                           {selectedAttempt?.parseStatus && selectedAttempt.parseStatus !== 'ok' && (
-                            <span className="text-[9px] px-1 py-px rounded" style={{ background: 'var(--border-subtle)', color: 'var(--text-tertiary)' }}>
+                            <span className="rounded px-1 py-px text-xs" style={{ background: 'var(--border-subtle)', color: 'var(--text-tertiary)' }}>
                               {selectedAttempt.parseStatus}
                             </span>
                           )}
                         </div>
-                        <div className="font-mono text-[13px] leading-relaxed break-all" style={{ color: 'var(--text-primary)' }}>
+                        <div className="break-all font-mono text-sm leading-relaxed" style={{ color: 'var(--text-primary)' }}>
                           {selectedAttempt?.sanLine || selectedAttempt?.parsedLine || '—'}
                         </div>
                         {selectedAttempt?.sanLine && selectedAttempt?.parsedLine && (
-                          <div className="font-mono text-[10px] mt-0.5 break-all" style={{ color: 'var(--text-tertiary)' }}>
+                          <div className="mt-0.5 break-all font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>
                             {selectedAttempt.parsedLine}
                           </div>
                         )}
@@ -791,7 +851,7 @@ export default function PuzzlesTab({
 
                   {/* Usage stats */}
                   <div className="px-4 py-2.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <div className="grid grid-cols-3 gap-x-2 text-[11px]">
+                    <div className="grid grid-cols-3 gap-x-2 text-sm">
                       <div className="flex flex-col">
                         <span style={{ color: 'var(--text-tertiary)' }}>Prompt</span>
                         <span className="font-mono tabular-nums" style={{ color: 'var(--text-primary)' }}>
@@ -814,23 +874,23 @@ export default function PuzzlesTab({
                   </div>
 
                   {/* Raw output + thinking */}
-                  <div className="px-4 py-3" style={{ borderBottom: (selectedPuzzle.source?.url || selectedPuzzle.source?.gameUrl) ? '1px solid var(--border-subtle)' : 'none' }}>
+                  <div className="px-4 py-3" style={{ borderBottom: selectedPuzzle.source?.url ? '1px solid var(--border-subtle)' : 'none' }}>
                     <div className="flex items-center justify-between mb-1.5">
-                      <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-tertiary)' }}>
+                      <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
                         Raw Output
                       </div>
                       {selectedAttempt?.rawOutputTruncated && !detail && (
                         <button
                           onClick={loadDetail}
                           disabled={detailLoadingKey === detailKey}
-                          className="text-[11px] hover:underline disabled:opacity-50"
+                          className="text-xs hover:underline disabled:opacity-50"
                           style={{ color: 'var(--accent)' }}
                         >
                           {detailLoadingKey === detailKey ? 'Loading…' : 'Show full output'}
                         </button>
                       )}
                     </div>
-                    <pre className="text-xs whitespace-pre-wrap break-words font-mono leading-relaxed max-h-24 overflow-y-auto custom-scrollbar" style={{ color: 'var(--text-secondary)' }}>
+                    <pre className="custom-scrollbar max-h-28 overflow-y-auto whitespace-pre-wrap break-words font-mono text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
                       {detail?.rawOutput ?? selectedAttempt?.rawOutput ?? '—'}
                       {selectedAttempt?.rawOutputTruncated && !detail && '…'}
                     </pre>
@@ -844,7 +904,7 @@ export default function PuzzlesTab({
                               return next;
                             });
                           }}
-                          className="mt-2 text-[11px] flex items-center gap-1 hover:underline"
+                          className="mt-2 flex items-center gap-1 text-sm hover:underline"
                           style={{ color: 'var(--accent)' }}
                         >
                           <ChevronDown className={`w-3 h-3 transition-transform ${showThinking ? '' : '-rotate-90'}`} />
@@ -860,34 +920,21 @@ export default function PuzzlesTab({
                   </div>
 
                   {/* Links */}
-                  {(selectedPuzzle.source?.url || selectedPuzzle.source?.gameUrl) && (
-                    <div className="px-4 py-2.5 flex items-center gap-2">
-                      {selectedPuzzle.source?.url && (
-                        <a
-                          href={selectedPuzzle.source.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors hover:bg-[var(--border-subtle)]"
-                          style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          Puzzle
-                        </a>
-                      )}
-                      {selectedPuzzle.source?.gameUrl && (
-                        <a
-                          href={selectedPuzzle.source.gameUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors hover:bg-[var(--border-subtle)]"
-                          style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          Game
-                        </a>
-                      )}
+                  {selectedPuzzle.source?.url && (
+                    <div className="px-4 py-2.5">
+                      <a
+                        href={selectedPuzzle.source.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors hover:bg-[var(--border-subtle)]"
+                        style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        View on Lichess
+                      </a>
                     </div>
                   )}
+                </div>
                 </div>
               </div>
             )}

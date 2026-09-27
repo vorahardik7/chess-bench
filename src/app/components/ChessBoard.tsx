@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { Chessground } from '@lichess-org/chessground';
 import { Config } from '@lichess-org/chessground/config';
-import { DrawShape } from '@lichess-org/chessground/draw';
+import type { DrawBrushes, DrawShape } from '@lichess-org/chessground/draw';
 
 interface ChessBoardProps {
   fen: string;
@@ -17,6 +17,20 @@ interface ChessBoardProps {
 }
 
 const INTRO_MOVE_HOLD_MS = 250;
+
+// Chessground writes these as SVG stroke attributes, so they must be literal colors.
+export const ARROW_COLORS = {
+  expected: '#1f9e4f',
+  model: '#dd3b2a',
+  lastMove: '#2f6fd6',
+} as const;
+
+const BOARD_BRUSHES: DrawBrushes = {
+  green: { key: 'g', color: ARROW_COLORS.expected, opacity: 0.9, lineWidth: 11 },
+  red: { key: 'r', color: ARROW_COLORS.model, opacity: 0.9, lineWidth: 11 },
+  blue: { key: 'b', color: ARROW_COLORS.lastMove, opacity: 0.85, lineWidth: 10 },
+  yellow: { key: 'y', color: '#e6a100', opacity: 0.9, lineWidth: 10 },
+};
 
 export default function ChessBoard({
   fen,
@@ -46,9 +60,8 @@ export default function ChessBoard({
     }
   };
 
-  // We use a ref so the mount effect can apply the latest props without a stale closure
+  // Delayed replays read this after the render that scheduled them.
   const latestPropsRef = useRef({ fen, orientation, viewOnly, shapes, lastMove });
-  latestPropsRef.current = { fen, orientation, viewOnly, shapes, lastMove };
 
   const applyFinalState = () => {
     const p = latestPropsRef.current;
@@ -88,6 +101,7 @@ export default function ChessBoard({
       drawable: {
         shapes: initial.shapes,
         autoShapes: [],
+        brushes: BOARD_BRUSHES,
       },
       lastMove: initial.lastMove,
       animation: {
@@ -114,6 +128,31 @@ export default function ChessBoard({
 
     apiRef.current = chessgroundApi;
     mountedRef.current = true;
+
+    // Hiding the puzzle panel (display:none) gives the board a 0×0 box. Chessground
+    // then redraws arrows from that box, which leaves a stray arrowhead in the
+    // middle. Redraw once the board has a real size again.
+    const boardEl = ref.current;
+    let lastWidth = boardEl.getBoundingClientRect().width;
+    let restoreFrame: number | null = null;
+    const resizeObserver = new ResizeObserver(() => {
+      const { width, height } = boardEl.getBoundingClientRect();
+      if (width < 2 || height < 2) {
+        lastWidth = 0;
+        return;
+      }
+      if (lastWidth >= 2) return;
+      lastWidth = width;
+      if (restoreFrame != null) window.cancelAnimationFrame(restoreFrame);
+      restoreFrame = window.requestAnimationFrame(() => {
+        restoreFrame = null;
+        const api = apiRef.current;
+        if (!api) return;
+        api.state.drawable.prevSvgHash = '';
+        applyFinalState();
+      });
+    });
+    resizeObserver.observe(boardEl);
     
     // We update lastReplayKeyRef so the initial playback doesn't trigger again on the first update if props haven't changed
     lastReplayKeyRef.current = replayKey ?? null;
@@ -131,6 +170,8 @@ export default function ChessBoard({
 
     return () => {
       clearReplayTimers();
+      if (restoreFrame != null) window.cancelAnimationFrame(restoreFrame);
+      resizeObserver.disconnect();
       apiRef.current = null;
       chessgroundApi.destroy();
     };
@@ -138,6 +179,7 @@ export default function ChessBoard({
   }, []); // Run once on mount
 
   useLayoutEffect(() => {
+    latestPropsRef.current = { fen, orientation, viewOnly, shapes, lastMove };
     if (!mountedRef.current || !apiRef.current) return;
 
     const hasReplayKey = typeof replayKey === 'string' && replayKey.length > 0;

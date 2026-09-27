@@ -56,6 +56,12 @@ export type ModelView = {
     totalCompletionTokens: number;
     totalReasoningTokens: number;
   };
+  /**
+   * One character per puzzle, in `puzzles` order.
+   * `1` correct, `0` incorrect, `.` no attempt.
+   * Lets the puzzle list paint without embedding every model's full attempts.
+   */
+  marks: string;
   attemptsByPuzzleId: Record<string, PuzzleAttemptView>;
 };
 

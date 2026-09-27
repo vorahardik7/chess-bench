@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { cache } from 'react';
 import type { ExplorerResults, ModelView, PuzzleAttemptView, PuzzleView } from './results.types';
@@ -227,6 +227,7 @@ function toModelView(run: RunFile): ModelView | null {
       totalCompletionTokens: Math.max(0, Math.trunc(safeNumber(summary?.totalCompletionTokens, totalCompletionTokens))),
       totalReasoningTokens: Math.max(0, Math.trunc(safeNumber(summary?.totalReasoningTokens, totalReasoningTokens))),
     },
+    marks: '',
     attemptsByPuzzleId,
   };
 }
@@ -246,37 +247,37 @@ async function readDatasetFile(): Promise<{ datasetId: string | null; generatedA
   }
 }
 
-async function readRunFiles(): Promise<RunFile[]> {
-  async function collectJsonFiles(dir: string): Promise<string[]> {
-    const entries = await readdir(dir, { withFileTypes: true });
-    const nested = await Promise.all(
-      entries.map(async (entry) => {
-        const fullPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          return collectJsonFiles(fullPath);
-        }
-        return entry.isFile() && entry.name.endsWith('.json') ? [fullPath] : [];
-      })
-    );
-    return nested.flat();
-  }
+type LoadedRun = { run: RunFile; filePath: string };
 
+async function collectJsonFiles(dir: string): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const nested = await Promise.all(
+    entries.map(async (entry) => {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) return collectJsonFiles(fullPath);
+      return entry.isFile() && entry.name.endsWith('.json') ? [fullPath] : [];
+    })
+  );
+  return nested.flat();
+}
+
+async function readRunFiles(): Promise<LoadedRun[]> {
   try {
     const files = await collectJsonFiles(RESULTS_DIR);
     const parsed = await Promise.all(
-      files.map(async (file) => {
+      files.map(async (filePath) => {
         try {
-          const raw = await readFile(file, 'utf8');
-          return JSON.parse(raw) as RunFile;
+          const raw = await readFile(filePath, 'utf8');
+          return { run: JSON.parse(raw) as RunFile, filePath };
         } catch {
           return null;
         }
       })
     );
-    const runs = parsed.filter((run): run is RunFile => Boolean(run));
+    const runs = parsed.filter((entry): entry is LoadedRun => Boolean(entry));
     runs.sort((a, b) => {
-      const ad = Date.parse(safeString(a.createdAt, '1970-01-01T00:00:00.000Z'));
-      const bd = Date.parse(safeString(b.createdAt, '1970-01-01T00:00:00.000Z'));
+      const ad = Date.parse(safeString(a.run.createdAt, '1970-01-01T00:00:00.000Z'));
+      const bd = Date.parse(safeString(b.run.createdAt, '1970-01-01T00:00:00.000Z'));
       return bd - ad;
     });
     return runs;
@@ -324,32 +325,32 @@ function derivePuzzlesFromRuns(runs: RunFile[]): PuzzleView[] {
     .map((entry) => entry.puzzle);
 }
 
-function selectBestRunPerModel(runs: RunFile[], datasetId: string | null): RunFile[] {
+function selectBestRunPerModel(loaded: LoadedRun[], datasetId: string | null): LoadedRun[] {
   const filteredByDataset = datasetId
-    ? runs.filter((run) => safeString(run.datasetId) === datasetId)
-    : runs;
-  const groups = new Map<string, RunFile[]>();
-  for (const run of filteredByDataset) {
-    const modelId = safeString(run.modelId);
+    ? loaded.filter((entry) => safeString(entry.run.datasetId) === datasetId)
+    : loaded;
+  const groups = new Map<string, LoadedRun[]>();
+  for (const entry of filteredByDataset) {
+    const modelId = safeString(entry.run.modelId);
     if (!modelId) continue;
     const list = groups.get(modelId) ?? [];
-    list.push(run);
+    list.push(entry);
     groups.set(modelId, list);
   }
 
-  const selected: RunFile[] = [];
+  const selected: LoadedRun[] = [];
   for (const group of groups.values()) {
     group.sort((a, b) => {
-      const ad = Date.parse(safeString(a.createdAt, '1970-01-01T00:00:00.000Z'));
-      const bd = Date.parse(safeString(b.createdAt, '1970-01-01T00:00:00.000Z'));
+      const ad = Date.parse(safeString(a.run.createdAt, '1970-01-01T00:00:00.000Z'));
+      const bd = Date.parse(safeString(b.run.createdAt, '1970-01-01T00:00:00.000Z'));
       return bd - ad;
     });
     selected.push(group[0]);
   }
 
   selected.sort((a, b) => {
-    const aAcc = safeNumber(a.summary?.accuracyStrict, 0);
-    const bAcc = safeNumber(b.summary?.accuracyStrict, 0);
+    const aAcc = safeNumber(a.run.summary?.accuracyStrict, 0);
+    const bAcc = safeNumber(b.run.summary?.accuracyStrict, 0);
     return bAcc - aAcc;
   });
   return selected;
@@ -360,9 +361,132 @@ export type AttemptDetail = {
   thinkingText: string | null;
 };
 
+type ResultsCache = {
+  signature: string;
+  value: ExplorerResults;
+  runPathByModelId: Record<string, string>;
+};
+
+const globalResults = globalThis as typeof globalThis & {
+  __chessBenchResults?: ResultsCache;
+};
+
+let inflightLoad: { signature: string; promise: Promise<ExplorerResults> } | null = null;
+
+async function fileStamp(filePath: string): Promise<string> {
+  try {
+    const info = await stat(filePath);
+    return `${filePath}:${info.mtimeMs}:${info.size}`;
+  } catch {
+    return `${filePath}:missing`;
+  }
+}
+
+/** Changes when puzzle data, result files, or this loader change. */
+async function resultsSignature(): Promise<string> {
+  const selfPath = path.resolve(process.cwd(), 'src/app/lib/results.ts');
+  let resultFiles: string[] = [];
+  try {
+    resultFiles = await collectJsonFiles(RESULTS_DIR);
+  } catch {
+    resultFiles = [];
+  }
+  resultFiles.sort();
+  const stamps = await Promise.all([
+    fileStamp(selfPath),
+    fileStamp(DATASET_PATH),
+    ...resultFiles.map((filePath) => fileStamp(filePath)),
+  ]);
+  return stamps.join('|');
+}
+
+function marksFor(model: ModelView, puzzles: PuzzleView[]): string {
+  let marks = '';
+  for (const puzzle of puzzles) {
+    const attempt = model.attemptsByPuzzleId[puzzle.id];
+    marks += !attempt ? '.' : attempt.correctStrict ? '1' : '0';
+  }
+  return marks;
+}
+
+function rememberResults(signature: string, value: ExplorerResults, runPathByModelId: Record<string, string>) {
+  globalResults.__chessBenchResults = { signature, value, runPathByModelId };
+}
+
+async function loadAndCache(signature: string): Promise<ExplorerResults> {
+  const [{ datasetId, generatedAt, puzzles }, loadedRuns] = await Promise.all([
+    readDatasetFile(),
+    readRunFiles(),
+  ]);
+  const selectedRuns = selectBestRunPerModel(loadedRuns, datasetId);
+  const models = selectedRuns
+    .map((entry) => toModelView(entry.run))
+    .filter((model): model is ModelView => Boolean(model));
+  const fallbackPuzzles = puzzles.length > 0 ? puzzles : derivePuzzlesFromRuns(selectedRuns.map((entry) => entry.run));
+  for (const model of models) {
+    model.marks = marksFor(model, fallbackPuzzles);
+  }
+  const runPathByModelId: Record<string, string> = {};
+  for (const entry of selectedRuns) {
+    const modelId = safeString(entry.run.modelId);
+    if (modelId) runPathByModelId[modelId] = entry.filePath;
+  }
+  const value: ExplorerResults = {
+    datasetId,
+    generatedAt,
+    puzzles: fallbackPuzzles,
+    models,
+    runCount: selectedRuns.length,
+  };
+  rememberResults(signature, value, runPathByModelId);
+  return value;
+}
+
+export const getLatestResults = cache(async (): Promise<ExplorerResults> => {
+  const signature = await resultsSignature();
+  const hit = globalResults.__chessBenchResults;
+  if (hit?.signature === signature) return hit.value;
+  if (inflightLoad?.signature === signature) return inflightLoad.promise;
+  const promise = loadAndCache(signature);
+  inflightLoad = { signature, promise };
+  try {
+    return await promise;
+  } finally {
+    if (inflightLoad?.promise === promise) inflightLoad = null;
+  }
+});
+
+/**
+ * Full attempts for one model, served from the in-memory results cache.
+ * The explorer page only inlines the top model's attempts; other models load these on selection.
+ */
+export async function getModelAttempts(
+  modelId: string
+): Promise<Record<string, PuzzleAttemptView> | null> {
+  if (!modelId) return null;
+  const results = await getLatestResults();
+  const model = results.models.find((entry) => entry.id === modelId);
+  return model ? model.attemptsByPuzzleId : null;
+}
+
+async function detailFromRunFile(filePath: string, puzzleId: string): Promise<AttemptDetail | null> {
+  try {
+    const raw = await readFile(filePath, 'utf8');
+    const run = JSON.parse(raw) as RunFile;
+    const attempt = (run.attempts ?? []).find((entry) => safeString(entry?.puzzleId) === puzzleId);
+    if (!attempt) return null;
+    return {
+      rawOutput: safeString(attempt.rawOutput),
+      thinkingText: typeof attempt.thinkingText === 'string' ? attempt.thinkingText : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Fetches the heavy fields (`rawOutput`, `thinkingText`) for a specific
- * (modelId, puzzleId) pair by re-reading the selected run file. These are
+ * (modelId, puzzleId) pair by re-reading that model's run file. These are
  * stripped / truncated from the initial RSC payload to stay under Vercel's
  * response-size limit, so the UI requests them only when the user opens the
  * corresponding panel.
@@ -372,36 +496,11 @@ export async function getAttemptDetail(
   puzzleId: string
 ): Promise<AttemptDetail | null> {
   if (!modelId || !puzzleId) return null;
-  const [{ datasetId }, runs] = await Promise.all([readDatasetFile(), readRunFiles()]);
-  const selectedRuns = selectBestRunPerModel(runs, datasetId);
-  const run = selectedRuns.find((r) => safeString(r.modelId) === modelId);
-  if (!run) return null;
-  const attempt = (run.attempts ?? []).find((a) => safeString(a?.puzzleId) === puzzleId);
-  if (!attempt) return null;
-  return {
-    rawOutput: safeString(attempt.rawOutput),
-    thinkingText: typeof attempt.thinkingText === 'string' ? attempt.thinkingText : null,
-  };
+  await getLatestResults();
+  const filePath = globalResults.__chessBenchResults?.runPathByModelId[modelId];
+  if (!filePath) return null;
+  return detailFromRunFile(filePath, puzzleId);
 }
-
-export const getLatestResults = cache(async (): Promise<ExplorerResults> => {
-  const [{ datasetId, generatedAt, puzzles }, runs] = await Promise.all([
-    readDatasetFile(),
-    readRunFiles(),
-  ]);
-  const selectedRuns = selectBestRunPerModel(runs, datasetId);
-  const models = selectedRuns
-    .map(toModelView)
-    .filter((model): model is ModelView => Boolean(model));
-  const fallbackPuzzles = puzzles.length > 0 ? puzzles : derivePuzzlesFromRuns(selectedRuns);
-  return {
-    datasetId,
-    generatedAt,
-    puzzles: fallbackPuzzles,
-    models,
-    runCount: selectedRuns.length,
-  };
-});
 
 export const getModelById = cache(async (modelId: string): Promise<ModelView | null> => {
   const results = await getLatestResults();

@@ -49,21 +49,21 @@ export function formatTrackLabel(level: string): string {
 
 export function getTrackDescription(level: string): string {
   if (level === "mate1" || level === "mateIn1") {
-    return "Solve a forced mate in one move.";
+    return "Mate on the first move.";
   }
   if (level === "mate2" || level === "mateIn2") {
-    return "Solve a forced mate in two moves.";
+    return "Mate in two moves, with the reply forced.";
   }
   if (level === "fork") {
-    return "Find the tactical line that creates a fork.";
+    return "One move that attacks two pieces.";
   }
   if (level === "pin") {
-    return "Find the tactical line that exploits a pin.";
+    return "Moving the front piece would lose the one behind it.";
   }
   if (level === "hangingPiece") {
-    return "Find the line that wins an undefended piece.";
+    return "Win a piece that isn't defended.";
   }
-  return "Find the best tactical line from the benchmark position.";
+  return "The best move from this position.";
 }
 
 export function formatPercent(value: number): string {
