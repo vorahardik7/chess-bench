@@ -40,11 +40,11 @@ export type BenchmarkConfig = {
 
 const config: BenchmarkConfig = {
   apiProvider: "openrouter",
-  modelId: "openai/gpt-6.1-sol",
-  variantId: "low",
-  modelName: "GPT-6.1-sol [low]",
-  reasoningEffort: "low",
-  providerOrder: ["openai"],
+  modelId: "x-ai/grok-4.6",
+  variantId: "medium ",
+  modelName: "Grok 4.6[medium]",
+  reasoningEffort: "medium",
+  providerOrder: ["xai/zdr"],
 };
 
 export default config;

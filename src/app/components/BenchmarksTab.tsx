@@ -26,6 +26,9 @@ import {
   Rectangle,
   ScatterChart,
   Scatter,
+  usePlotArea,
+  useXAxisScale,
+  useYAxisScale,
 } from 'recharts';
 import type { BarShapeProps } from 'recharts';
 import { getModelLogoPath, getModelLogoClass, getProviderLabel, getModelProvider } from './utils';
@@ -396,7 +399,7 @@ function LabChip({
       aria-pressed={active}
       className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors border ${
         active
-          ? 'bg-[var(--accent-light)] border-[var(--accent-border)] text-[var(--accent)]'
+          ? 'bg-[color-mix(in_oklab,var(--accent)_18%,var(--surface))] border-[var(--accent)] text-[var(--accent)] shadow-[0_0_0_1px_var(--accent-border)]'
           : 'bg-[var(--border-subtle)] border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
       }`}
     >
@@ -534,23 +537,100 @@ type ChartTab = 'leaderboard' | 'overall' | 'value';
 // ============================================================================
 // COST VS ACCURACY
 // ============================================================================
-type ValuePoint = { id: string; name: string; cost: number; score: number; onFrontier: boolean };
+type ValuePoint = {
+  id: string;
+  name: string;
+  familyKey: string;
+  effort: string | null;
+  provider: string;
+  cost: number;
+  totalCost: number;
+  score: number;
+};
 
-// A model is on the frontier when no cheaper model scores at least as well.
-function splitByFrontier(points: Omit<ValuePoint, 'onFrontier'>[]): ValuePoint[] {
+type ValueFamily = {
+  key: string;
+  name: string;
+  provider: string;
+  logoPath: string | null;
+  points: ValuePoint[];
+  best: number;
+  colorClass: string;
+  color: string;
+};
+
+type CostScale = 'log' | 'linear';
+
+const DEFAULT_VALUE_FAMILIES = 8;
+const LABEL_GAP = 26;
+const LABEL_COLUMN_WIDTH = 268;
+
+// Each lab keeps one hue; its families step through lightness and a small hue drift so lines stay distinct.
+// `neutral` labs (monochrome brands) use a theme-specific lightness so they read as ink on light and white on dark.
+const LAB_HUES: Record<string, { hue: number; chroma: number; neutral?: boolean }> = {
+  anthropic: { hue: 42, chroma: 1 },
+  google: { hue: 155, chroma: 0.9 },
+  openai: { hue: 255, chroma: 0.55, neutral: true },
+  'x-ai': { hue: 292, chroma: 1 },
+  'z-ai': { hue: 222, chroma: 0.9 },
+  qwen: { hue: 340, chroma: 0.9 },
+  meta: { hue: 262, chroma: 1 },
+  'meta-llama': { hue: 262, chroma: 1 },
+};
+const SHADE_STEPS = [
+  { dl: 0, dh: 0 },
+  { dl: -0.1, dh: 30 },
+  { dl: 0.07, dh: -26 },
+  { dl: -0.17, dh: 56 },
+  { dl: 0.12, dh: -50 },
+];
+
+function familyColor(provider: string, shade: number) {
+  const lab = LAB_HUES[provider] ?? { hue: 75, chroma: 0.25, neutral: true };
+  const step = SHADE_STEPS[shade % SHADE_STEPS.length];
+  const base = lab.neutral ? 'var(--lab-l) + var(--lab-neutral-lift)' : 'var(--lab-l)';
+  return `oklch(calc(${base} + ${step.dl}) calc(var(--lab-c) * ${lab.chroma}) ${lab.hue + step.dh})`;
+}
+
+// "GPT-6 Astra [high]" -> one family ("GPT-6 Astra"), drawn as a single line across effort levels.
+function modelFamily(model: { id: string; name: string }) {
+  const match = /^(.*?)\s*\[([^\]]+)\]$/.exec(model.name);
+  const provider = getModelProvider(model.id);
+  const name = match ? match[1] : model.name;
+  return { key: `${provider}:${name}`, name, effort: match ? match[2] : null, provider };
+}
+
+// Variants of the strongest families, so the default chart shows whole lines rather than stray points.
+function defaultValueSelection(models: ExplorerResults['models']): Set<string> {
+  const bestByFamily = new Map<string, number>();
+  for (const m of models) {
+    const key = modelFamily(m).key;
+    bestByFamily.set(key, Math.max(bestByFamily.get(key) ?? 0, m.score));
+  }
+  const topFamilies = new Set(
+    [...bestByFamily.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, DEFAULT_VALUE_FAMILIES)
+      .map(([key]) => key)
+  );
+  return new Set(models.filter((m) => topFamilies.has(modelFamily(m).key)).map((m) => m.id));
+}
+
+// Points no cheaper model beats on accuracy, in cost order.
+function paretoFrontier(points: ValuePoint[]): ValuePoint[] {
   const byCost = [...points].sort((a, b) => a.cost - b.cost || b.score - a.score);
   let best = -Infinity;
-  return byCost.map((p) => {
-    const onFrontier = p.score > best;
-    if (onFrontier) best = p.score;
-    return { ...p, onFrontier };
+  return byCost.filter((p) => {
+    if (p.score <= best) return false;
+    best = p.score;
+    return true;
   });
 }
 
-function costTicks(min: number, max: number): number[] {
+function logCostTicks(min: number, max: number): number[] {
   const out: number[] = [];
   for (let exp = Math.floor(Math.log10(min)); exp <= Math.ceil(Math.log10(max)); exp += 1) {
-    for (const m of [1, 3]) {
+    for (const m of [1, 2, 5]) {
       const v = m * 10 ** exp;
       if (v >= min && v <= max) out.push(v);
     }
@@ -558,47 +638,193 @@ function costTicks(min: number, max: number): number[] {
   return out;
 }
 
-function formatCostTick(v: number) {
-  if (v >= 1) return `$${v.toFixed(0)}`;
-  return `$${v.toFixed(v >= 0.1 ? 1 : 2)}`;
+function linearCostTicks(max: number): number[] {
+  const raw = max / 5;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? raw;
+  return Array.from({ length: Math.ceil(max / step) + 1 }, (_, i) => Number((i * step).toPrecision(6)));
 }
 
-function ValueDot(props: { cx?: number; cy?: number; payload?: ValuePoint }) {
-  const { cx, cy, payload } = props;
-  if (typeof cx !== 'number' || typeof cy !== 'number' || !payload) return <g />;
-  if (!payload.onFrontier) {
-    return <circle cx={cx} cy={cy} r={4.5} className="value-dot" />;
+function formatCost(v: number) {
+  if (v === 0) return '$0';
+  return `$${Number(v.toPrecision(2))}`;
+}
+
+// Push overlapping labels apart while keeping each as close to its line end as possible.
+function spreadLabels<T extends { y: number }>(items: T[], top: number, bottom: number): T[] {
+  const sorted = [...items].sort((a, b) => a.y - b.y).map((item) => ({ ...item }));
+  for (let i = 1; i < sorted.length; i += 1) {
+    sorted[i].y = Math.max(sorted[i].y, sorted[i - 1].y + LABEL_GAP);
   }
+  const last = sorted.length - 1;
+  if (last >= 0) sorted[last].y = Math.min(sorted[last].y, bottom);
+  for (let i = last - 1; i >= 0; i -= 1) {
+    sorted[i].y = Math.min(sorted[i].y, sorted[i + 1].y - LABEL_GAP);
+  }
+  for (let i = 0; i < sorted.length; i += 1) {
+    sorted[i].y = Math.max(sorted[i].y, i === 0 ? top : sorted[i - 1].y + LABEL_GAP);
+  }
+  return sorted;
+}
+
+function ValueOverlay({
+  families,
+  hovered,
+  onHover,
+}: {
+  families: ValueFamily[];
+  hovered: string | null;
+  onHover: (key: string | null) => void;
+}) {
+  const xScale = useXAxisScale();
+  const yScale = useYAxisScale();
+  const plot = usePlotArea();
+  if (!xScale || !yScale || !plot || !Number.isFinite(plot.x + plot.width)) return null;
+
+  const anchors = families.flatMap((family) => {
+    const end = family.points[family.points.length - 1];
+    const x = xScale(end.cost);
+    const y = yScale(end.score);
+    return Number.isFinite(x) && Number.isFinite(y) ? [{ family, x: x as number, y: y as number, anchorY: y as number }] : [];
+  });
+  const labelX = plot.x + plot.width + 36;
+  const placed = spreadLabels(anchors, plot.y + 8, plot.y + plot.height - 8);
+
   return (
     <g>
-      <circle cx={cx} cy={cy} r={6.5} className="value-dot-frontier" />
-      <text x={cx + 10} y={cy - 8} fontSize={11} fontWeight={600} className="chart-label">
-        {payload.name}
+      <text x={plot.x + 14} y={plot.y + 18} className="value-better">
+        ↖ Better
       </text>
+      {placed.map(({ family, x, anchorY, y }) => {
+        const dimmed = hovered !== null && hovered !== family.key;
+        const active = hovered === family.key;
+        return (
+          <g
+            key={family.key}
+            className={`value-label ${family.colorClass}`}
+            opacity={dimmed ? 0.28 : 1}
+            onMouseEnter={() => onHover(family.key)}
+            onMouseLeave={() => onHover(null)}
+          >
+            <path
+              d={`M ${x + 9} ${anchorY} C ${(x + labelX) / 2} ${anchorY}, ${(x + labelX) / 2} ${y}, ${labelX - 10} ${y}`}
+              className="value-leader"
+            />
+            <rect x={labelX - 8} y={y - 12} width={LABEL_COLUMN_WIDTH - 36} height={24} rx={6} className="value-label-bg" />
+            {family.logoPath && (
+              <image
+                href={family.logoPath}
+                x={labelX}
+                y={y - 8}
+                width={16}
+                height={16}
+                className={getModelLogoClass(family.logoPath)}
+              />
+            )}
+            <text x={labelX + (family.logoPath ? 24 : 0)} y={y} dominantBaseline="central" className="value-label-name" fontWeight={active ? 650 : 560}>
+              {family.name.length > 22 ? `${family.name.slice(0, 21)}…` : family.name}
+            </text>
+            <text x={labelX + LABEL_COLUMN_WIDTH - 52} y={y} dominantBaseline="central" textAnchor="end" className="value-label-score">
+              {family.best.toFixed(1)}%
+            </text>
+          </g>
+        );
+      })}
     </g>
   );
 }
 
-function ValueTooltip({ active, payload }: { active?: boolean; payload?: { payload?: ValuePoint }[] }) {
+function ValueTooltip({
+  active,
+  payload,
+  familiesByKey,
+}: {
+  active?: boolean;
+  payload?: { payload?: ValuePoint }[];
+  familiesByKey: Map<string, ValueFamily>;
+}) {
   const point = payload?.[0]?.payload;
-  if (!active || !point) return null;
+  const family = point?.familyKey ? familiesByKey.get(point.familyKey) : undefined;
+  if (!active || !point || !family) return null;
+  const rows = [
+    ['Accuracy', `${point.score.toFixed(1)}%`],
+    ['Cost per puzzle', `$${point.cost.toFixed(4)}`],
+    ['Full run', `$${point.totalCost.toFixed(2)}`],
+  ];
   return (
-    <div
-      className="rounded-lg px-3.5 py-2.5 text-sm"
-      style={{ background: 'var(--surface-raised)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-pop)' }}
-    >
-      <div className="font-semibold" style={{ color: 'var(--text-primary)' }}>{point.name}</div>
-      <div className="mt-1.5 grid grid-cols-[auto_auto] gap-x-4 gap-y-0.5 font-mono text-xs">
-        <span style={{ color: 'var(--text-tertiary)' }}>Accuracy</span>
-        <span className="text-right" style={{ color: 'var(--text-primary)' }}>{point.score.toFixed(1)}%</span>
-        <span style={{ color: 'var(--text-tertiary)' }}>Total cost</span>
-        <span className="text-right" style={{ color: 'var(--text-primary)' }}>${point.cost.toFixed(4)}</span>
+    <div className={`value-tooltip min-w-[220px] overflow-hidden rounded-xl text-sm ${family.colorClass}`}>
+      <div className="flex items-center gap-2.5 px-3.5 pt-3 pb-2.5">
+        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: 'currentColor', boxShadow: '0 0 0 3px color-mix(in oklch, currentColor 22%, transparent)' }} />
+        <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{family.name}</span>
+        {point.effort && (
+          <span
+            className="ml-auto rounded-full px-2 py-0.5 text-[11px] font-semibold"
+            style={{ background: 'color-mix(in oklch, currentColor 16%, transparent)' }}
+          >
+            {point.effort}
+          </span>
+        )}
       </div>
-      {point.onFrontier && (
-        <div className="mt-2 text-xs font-medium" style={{ color: 'var(--accent)' }}>
-          Best accuracy at this price or lower
-        </div>
-      )}
+      <div className="grid grid-cols-[1fr_auto] gap-x-6 gap-y-1 px-3.5 pb-3 pt-2.5 text-[12.5px]" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+        {rows.map(([label, value]) => (
+          <div key={label} className="contents">
+            <span style={{ color: 'var(--text-tertiary)' }}>{label}</span>
+            <span className="text-right font-mono font-medium tabular-nums" style={{ color: 'var(--text-primary)' }}>{value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ChartControls({
+  showPareto,
+  onPareto,
+  scale,
+  onScale,
+}: {
+  showPareto: boolean;
+  onPareto: (v: boolean) => void;
+  scale: CostScale;
+  onScale: (v: CostScale) => void;
+}) {
+  const segment = (active: boolean) => ({
+    background: active ? 'var(--surface)' : 'transparent',
+    color: active ? 'var(--text-primary)' : 'var(--text-tertiary)',
+    boxShadow: active ? '0 1px 2px rgba(0,0,0,0.12), inset 0 0 0 1px var(--border)' : undefined,
+  });
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => onPareto(!showPareto)}
+        aria-pressed={showPareto}
+        className="inline-flex h-8 items-center gap-2 rounded-lg px-3 text-[12.5px] font-medium transition-colors hover:text-[var(--text-primary)]"
+        style={{
+          background: showPareto ? 'var(--accent-light)' : 'var(--surface-raised)',
+          border: `1px solid ${showPareto ? 'var(--accent-border)' : 'var(--border)'}`,
+          color: showPareto ? 'var(--accent)' : 'var(--text-secondary)',
+        }}
+      >
+        <svg width="18" height="10" aria-hidden="true">
+          <path d="M1 9 L7 4 L17 1" fill="none" stroke="currentColor" strokeWidth="1.6" strokeDasharray="3 2.5" strokeLinecap="round" />
+        </svg>
+        Pareto frontier
+      </button>
+      <div className="inline-flex h-8 items-center rounded-lg p-0.5" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border)' }}>
+        {(['linear', 'log'] as const).map((option) => (
+          <button
+            key={option}
+            type="button"
+            onClick={() => onScale(option)}
+            aria-pressed={scale === option}
+            className="h-full rounded-md px-3 text-[12.5px] font-medium capitalize transition-all"
+            style={segment(scale === option)}
+          >
+            {option}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -629,8 +855,11 @@ export default function BenchmarksTab({
   const [selectedByTab, setSelectedByTab] = useState<Record<ChartTab, Set<string>>>(() => {
     const byScore = [...results.models].sort((a, b) => b.score - a.score).map((model) => model.id);
     const topTen = byScore.slice(0, DEFAULT_CHART_MODELS);
-    return { leaderboard: new Set(byScore), overall: new Set(topTen), value: new Set(topTen) };
+    return { leaderboard: new Set(byScore), overall: new Set(topTen), value: defaultValueSelection(results.models) };
   });
+  const [costScale, setCostScale] = useState<CostScale>('log');
+  const [showPareto, setShowPareto] = useState(false);
+  const [hoveredFamily, setHoveredFamily] = useState<string | null>(null);
   const [queryByTab, setQueryByTab] = useState<Record<ChartTab, string>>({ leaderboard: '', overall: '', value: '' });
   const selectedModels = selectedByTab[activeTab];
   const searchQuery = queryByTab[activeTab];
@@ -672,28 +901,71 @@ export default function BenchmarksTab({
   }, [modelsByScore]);
 
   const valueData = useMemo(() => {
-    const points = modelsByScore.flatMap((m) => {
-      const cost = results.models.find((r) => r.id === m.id)?.summary.totalCost;
-      return typeof cost === 'number' && cost > 0 ? [{ id: m.id, name: m.name, cost, score: m.score }] : [];
+    const points: ValuePoint[] = modelsByScore.flatMap((m) => {
+      const summary = results.models.find((r) => r.id === m.id)?.summary;
+      if (!summary || summary.totalCost <= 0 || summary.total <= 0) return [];
+      const family = modelFamily(m);
+      return [{
+        id: m.id,
+        name: m.name,
+        familyKey: family.key,
+        effort: family.effort,
+        provider: family.provider,
+        cost: summary.totalCost / summary.total,
+        totalCost: summary.totalCost,
+        score: m.score,
+      }];
     });
-    const all = splitByFrontier(points);
-    const costs = all.map((p) => p.cost);
-    const yMin = all.length ? Math.max(0, Math.floor((Math.min(...all.map((p) => p.score)) - 5) / 10) * 10) : 0;
-    const domain: [number, number] = costs.length
-      ? [Math.min(...costs) / 1.4, Math.max(...costs) * 1.4]
-      : [0.01, 1];
+
+    const byFamily = new Map<string, ValueFamily>();
+    for (const point of points) {
+      const family = byFamily.get(point.familyKey) ?? {
+        key: point.familyKey,
+        name: modelFamily(point).name,
+        provider: point.provider,
+        logoPath: getModelLogoPath(point.id),
+        points: [],
+        best: 0,
+        colorClass: '',
+        color: '',
+      };
+      family.points.push(point);
+      family.best = Math.max(family.best, point.score);
+      byFamily.set(point.familyKey, family);
+    }
+    const families = [...byFamily.values()].sort((a, b) => b.best - a.best);
+    const shadeByLab = new Map<string, number>();
+    families.forEach((family, i) => {
+      family.points.sort((a, b) => a.cost - b.cost);
+      const shade = shadeByLab.get(family.provider) ?? 0;
+      shadeByLab.set(family.provider, shade + 1);
+      family.colorClass = `fam-${i}`;
+      family.color = familyColor(family.provider, shade);
+    });
+
+    const costs = points.map((p) => p.cost);
+    const scores = points.map((p) => p.score);
+    const minCost = costs.length ? Math.min(...costs) : 0.001;
+    const maxCost = costs.length ? Math.max(...costs) : 0.1;
+    const logDomain: [number, number] = [minCost / 1.3, maxCost * 1.3];
+    const linearTicks = linearCostTicks(maxCost * 1.05);
+    const lo = scores.length ? Math.min(...scores) : 0;
+    const hi = scores.length ? Math.max(...scores) : 100;
+    const yStep = hi - lo > 40 ? 10 : 5;
+    const yMin = Math.max(0, Math.floor((lo - 1.5) / yStep) * yStep);
+    const yMax = Math.min(100, Math.ceil((hi + 1.5) / yStep) * yStep);
     return {
-      frontier: all.filter((p) => p.onFrontier),
-      others: all.filter((p) => !p.onFrontier),
-      domain,
-      ticks: costTicks(domain[0], domain[1]),
-      yTicks: Array.from(
-        { length: 11 - yMin / 10 },
-        (_, i) => yMin + i * 10
-      ),
-      yMin,
+      points,
+      families,
+      familiesByKey: new Map(families.map((f) => [f.key, f])),
+      colorCss: families.map((f) => `.value-chart .${f.colorClass}{color:${f.color}}`).join('\n'),
+      frontier: paretoFrontier(points),
+      xDomain: costScale === 'log' ? logDomain : ([0, linearTicks[linearTicks.length - 1]] as [number, number]),
+      xTicks: costScale === 'log' ? logCostTicks(logDomain[0], logDomain[1]) : linearTicks,
+      yDomain: [yMin, yMax] as [number, number],
+      yTicks: Array.from({ length: (yMax - yMin) / yStep + 1 }, (_, i) => yMin + i * yStep),
     };
-  }, [modelsByScore, results.models]);
+  }, [costScale, modelsByScore, results.models]);
 
   const costByModel = useMemo(() => {
     return new Map(
@@ -851,7 +1123,7 @@ export default function BenchmarksTab({
                 ? 'Every model, ranked by exact-line accuracy'
                 : activeTab === 'overall'
                   ? 'Share of puzzles each selected model solved'
-                  : 'Total run cost against accuracy for each selected model'}
+                  : 'What each point of accuracy costs. Up and to the left is better'}
             </div>
           </div>
 
@@ -1095,29 +1367,20 @@ export default function BenchmarksTab({
           </div>
         )}
 
-        {activeTab === 'value' && valueData.frontier.length > 0 && (
-          <div className="mb-2 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
-            <span className="inline-flex items-center gap-2">
-              <svg width="28" height="10" aria-hidden="true">
-                <line x1="0" y1="5" x2="28" y2="5" className="frontier-line" />
-                <circle cx="14" cy="5" r="4" className="value-dot-frontier" />
-              </svg>
-              Best value: no cheaper selected model scores higher
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <svg width="10" height="10" aria-hidden="true">
-                <circle cx="5" cy="5" r="3.5" className="value-dot" />
-              </svg>
-              Other selected models (hover for details)
-            </span>
+        {activeTab === 'value' && (
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-3 pl-1">
+            <div className="text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+              Accuracy <span style={{ color: 'var(--text-tertiary)' }}>· exact-line solve rate</span>
+            </div>
+            <ChartControls showPareto={showPareto} onPareto={setShowPareto} scale={costScale} onScale={setCostScale} />
           </div>
         )}
 
         {activeTab !== 'leaderboard' && (
           <div className="w-full overflow-x-auto">
           <div
-            className="h-[min(70dvh,700px)] min-h-[420px] w-full"
-            style={{ minWidth: activeTab === 'overall' ? Math.max(640, overallData.length * 64) : 640 }}
+            className={`w-full ${activeTab === 'value' ? 'h-[min(78dvh,780px)] min-h-[560px]' : 'h-[min(70dvh,700px)] min-h-[420px]'}`}
+            style={{ minWidth: activeTab === 'overall' ? Math.max(640, overallData.length * 64) : 820 }}
           >
           {overallData.length === 0 ? (
             <div className="h-full flex items-center justify-center text-sm" style={{ color: 'var(--text-tertiary)' }}>
@@ -1162,44 +1425,107 @@ export default function BenchmarksTab({
               )}
 
               {activeTab === 'value' && (
-                <ResponsiveContainer width="100%" height="100%">
-                  <ScatterChart margin={{ top: 24, right: 110, left: 8, bottom: 24 }}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis
-                      type="number"
-                      dataKey="cost"
-                      name="Total cost"
-                      scale="log"
-                      domain={valueData.domain}
-                      ticks={valueData.ticks}
-                      tickFormatter={formatCostTick}
-                      tick={{ fontSize: 11 }}
-                      tickLine={false}
-                      allowDataOverflow
-                      label={{ value: 'Total cost to run the benchmark (log scale)', position: 'insideBottom', offset: -16, className: 'chart-text', fontSize: 11 }}
-                    />
-                    <YAxis
-                      type="number"
-                      dataKey="score"
-                      name="Accuracy"
-                      width={48}
-                      domain={[valueData.yMin, 100]}
-                      ticks={valueData.yTicks}
-                      interval={0}
-                      tick={{ fontSize: 11 }}
-                      tickLine={false}
-                      tickFormatter={(v) => `${v}%`}
-                    />
-                    <Tooltip content={<ValueTooltip />} cursor={{ strokeDasharray: '3 3' }} />
-                    <Scatter data={valueData.others} shape={ValueDot} isAnimationActive={false} />
-                    <Scatter
-                      data={valueData.frontier}
-                      shape={ValueDot}
-                      line={{ className: 'frontier-line' }}
-                      isAnimationActive={false}
-                    />
-                  </ScatterChart>
-                </ResponsiveContainer>
+                <div className="value-chart h-full w-full" data-hovering={hoveredFamily ? '' : undefined}>
+                  <style>{valueData.colorCss}</style>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ScatterChart
+                      margin={{ top: 8, right: LABEL_COLUMN_WIDTH, left: 4, bottom: 36 }}
+                      onMouseLeave={() => setHoveredFamily(null)}
+                    >
+                      <CartesianGrid strokeDasharray="1 7" strokeLinecap="round" vertical={false} className="value-grid" />
+                      <XAxis
+                        type="number"
+                        dataKey="cost"
+                        name="Cost per puzzle"
+                        scale={costScale}
+                        domain={valueData.xDomain}
+                        ticks={valueData.xTicks}
+                        interval={0}
+                        tickFormatter={formatCost}
+                        tick={{ fontSize: 12.5, className: 'value-tick' }}
+                        tickLine={false}
+                        axisLine={false}
+                        tickMargin={14}
+                        allowDataOverflow
+                        label={{
+                          value: `Cost per puzzle  ·  USD${costScale === 'log' ? ', log scale' : ''}`,
+                          position: 'insideBottom',
+                          offset: -30,
+                          className: 'value-axis-title',
+                        }}
+                      />
+                      <YAxis
+                        type="number"
+                        dataKey="score"
+                        name="Accuracy"
+                        width={52}
+                        domain={valueData.yDomain}
+                        ticks={valueData.yTicks}
+                        interval={0}
+                        tick={{ fontSize: 12.5, className: 'value-tick' }}
+                        tickLine={false}
+                        axisLine={false}
+                        tickMargin={10}
+                        tickFormatter={(v) => `${v}%`}
+                      />
+                      <Tooltip
+                        content={<ValueTooltip familiesByKey={valueData.familiesByKey} />}
+                        cursor={false}
+                        isAnimationActive={false}
+                        offset={18}
+                      />
+                      {showPareto && (
+                        <Scatter
+                          data={valueData.frontier}
+                          shape={() => <g />}
+                          line={{ className: 'frontier-line' }}
+                          tooltipType="none"
+                          isAnimationActive={false}
+                        />
+                      )}
+                      {valueData.families.map((family) => {
+                        const dimmed = hoveredFamily !== null && hoveredFamily !== family.key;
+                        const highlighted = hoveredFamily === family.key;
+                        const endId = family.points[family.points.length - 1].id;
+                        return (
+                          <Scatter
+                            key={family.key}
+                            name={family.name}
+                            data={family.points}
+                            line={{
+                              className: `value-line ${family.colorClass}`,
+                              stroke: 'currentColor',
+                              strokeWidth: highlighted ? 3.25 : 2.5,
+                              strokeOpacity: dimmed ? 0.12 : 1,
+                              strokeLinecap: 'round',
+                              strokeLinejoin: 'round',
+                            }}
+                            onMouseEnter={() => setHoveredFamily(family.key)}
+                            shape={(props: { cx?: number; cy?: number; payload?: ValuePoint }) => {
+                              const { cx, cy, payload } = props;
+                              if (typeof cx !== 'number' || typeof cy !== 'number') return <g />;
+                              const isEnd = payload?.id === endId;
+                              const r = (isEnd ? 5.5 : 4.25) + (highlighted ? 1 : 0);
+                              return (
+                                <g className={`value-dot ${family.colorClass}`} opacity={dimmed ? 0.15 : 1}>
+                                  {(isEnd || highlighted) && <circle cx={cx} cy={cy} r={r + 5} className="value-halo" />}
+                                  <circle cx={cx} cy={cy} r={r} className="value-point" />
+                                  {highlighted && payload?.effort && (
+                                    <text x={cx} y={cy - r - 10} textAnchor="middle" className="value-effort">
+                                      {payload.effort}
+                                    </text>
+                                  )}
+                                </g>
+                              );
+                            }}
+                            isAnimationActive={false}
+                          />
+                        );
+                      })}
+                      <ValueOverlay families={valueData.families} hovered={hoveredFamily} onHover={setHoveredFamily} />
+                    </ScatterChart>
+                  </ResponsiveContainer>
+                </div>
               )}
             </>
           )}
@@ -1212,10 +1538,8 @@ export default function BenchmarksTab({
             `Overall score = average across tested puzzle tracks. Showing ${overallData.length} of ${models.length} models; the top ${DEFAULT_CHART_MODELS} are selected by default.`}
           {activeTab === 'leaderboard' && 'Accuracy counts only exact matches of the expected move line. Track cells are shaded by score.'}
           {activeTab === 'value' &&
-            `Up and to the left is better. Best value is worked out from the models currently selected.${
-              valueData.frontier.length + valueData.others.length < modelsByScore.length
-                ? ' Models without cost data are left out.'
-                : ''
+            `Each line joins one model’s reasoning-effort settings; hover it to see which is which. Labels show each family’s best accuracy.${
+              valueData.points.length < modelsByScore.length ? ' Models without cost data are left out.' : ''
             }`}
         </div>
       </section>
