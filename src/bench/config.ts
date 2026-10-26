@@ -40,11 +40,11 @@ export type BenchmarkConfig = {
 
 const config: BenchmarkConfig = {
   apiProvider: "openrouter",
-  modelId: "google/gemini-4-argon",
-  variantId: "high",
-  modelName: "Gemini 4 Argon [high]",
-  reasoningEffort: "high",
-  providerOrder: ["google-ai-studio"],
+  modelId: "openai/gpt-6.1-terra",
+  variantId: "max",
+  modelName: "GPT-6.1-terra [max]",
+  reasoningEffort: "max",
+  providerOrder: ["openai/flex"],
 };
 
 export default config;
