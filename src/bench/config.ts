@@ -40,10 +40,10 @@ export type BenchmarkConfig = {
 
 const config: BenchmarkConfig = {
   apiProvider: "openrouter",
-  modelId: "openai/gpt-6.1-terra",
-  variantId: "max",
-  modelName: "GPT-6.1-terra [max]",
-  reasoningEffort: "max",
+  modelId: "openai/gpt-6-astra",
+  variantId: "xhigh",
+  modelName: "GPT-6 Astra [xhigh]",
+  reasoningEffort: "xhigh",
   providerOrder: ["openai/flex"],
 };
 
