@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "chess-bench/benchmark-run",
-  "title": "BenchmarkRun",
+  "title": "BenchmarkRun (harness v2)",
   "type": "object",
   "required": [
     "schema",
@@ -14,13 +14,29 @@
     "attempts"
   ],
   "properties": {
-    "schema": { "type": "string", "const": "benchmark-run" },
-    "runId": { "type": "string" },
-    "createdAt": { "type": "string", "format": "date-time" },
-    "datasetId": { "type": "string" },
-    "modelId": { "type": "string" },
-    "provider": { "type": "string" },
-    "promptFile": { "type": "string" },
+    "schema": {
+      "type": "string",
+      "const": "benchmark-run"
+    },
+    "runId": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "datasetId": {
+      "type": "string"
+    },
+    "modelId": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string"
+    },
+    "promptFile": {
+      "type": "string"
+    },
     "summary": {
       "type": "object",
       "required": [
@@ -35,17 +51,81 @@
         "averageLatencyMs"
       ],
       "properties": {
-        "total": { "type": "integer", "minimum": 0 },
-        "parsed": { "type": "integer", "minimum": 0 },
-        "sanConverted": { "type": "integer", "minimum": 0 },
-        "correctStrict": { "type": "integer", "minimum": 0 },
-        "accuracyStrict": { "type": "number", "minimum": 0, "maximum": 1 },
-        "accuracyParsed": { "type": "number", "minimum": 0, "maximum": 1 },
-        "totalPromptTokens": { "type": "integer", "minimum": 0 },
-        "totalCompletionTokens": { "type": "integer", "minimum": 0 },
-        "totalReasoningTokens": { "type": "integer", "minimum": 0 },
-        "totalCost": { "type": "number", "minimum": 0 },
-        "averageLatencyMs": { "type": "number", "minimum": 0 }
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "parsed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sanConverted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "correctStrict": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "accuracyStrict": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "accuracyParsed": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "totalPromptTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalCompletionTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalReasoningTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalCost": {
+          "type": "number",
+          "minimum": 0
+        },
+        "averageLatencyMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "checkmateAlternatives": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "firstMoveCorrect": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "firstMoveAccuracy": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "illegalMoves": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requestErrors": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalTurns": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "attempts": {
@@ -53,38 +133,105 @@
       "items": {
         "type": "object",
         "required": [
-          "index",
-          "puzzleId",
-          "track",
-          "ratingBucket",
-          "expectedLine",
-          "rawOutput",
-          "parsedLine",
-          "parseStatus",
-          "formatValid",
           "correctStrict",
+          "expectedLine",
+          "firstMoveCorrect",
+          "formatValid",
+          "index",
           "latencyMs",
+          "parseStatus",
+          "parsedLine",
+          "puzzleId",
+          "ratingBucket",
+          "rawOutput",
+          "track",
+          "turns",
           "usage"
         ],
         "properties": {
-          "index": { "type": "integer", "minimum": 0 },
-          "puzzleId": { "type": "string" },
-          "track": { "type": "string" },
-          "ratingBucket": { "type": "string" },
-          "sourceFen": { "type": "string" },
-          "initialMove": { "type": "string" },
-          "currentFen": { "type": "string" },
-          "sideToMove": { "type": "string", "enum": ["White", "Black"] },
-          "expectedLine": { "type": "string" },
-          "expectedSanLine": { "type": ["string", "null"] },
-          "rawOutput": { "type": "string" },
-          "parsedLine": { "type": ["string", "null"] },
-          "sanLine": { "type": ["string", "null"] },
-          "parseStatus": { "type": "string" },
-          "formatValid": { "type": "boolean" },
-          "correctStrict": { "type": "boolean" },
-          "thinkingText": { "type": ["string", "null"] },
-          "latencyMs": { "type": "number", "minimum": 0 },
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "puzzleId": {
+            "type": "string"
+          },
+          "track": {
+            "type": "string"
+          },
+          "ratingBucket": {
+            "type": "string"
+          },
+          "sourceFen": {
+            "type": "string"
+          },
+          "initialMove": {
+            "type": "string"
+          },
+          "currentFen": {
+            "type": "string"
+          },
+          "sideToMove": {
+            "type": "string",
+            "enum": [
+              "White",
+              "Black"
+            ]
+          },
+          "expectedLine": {
+            "type": "string"
+          },
+          "expectedSanLine": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rawOutput": {
+            "type": "string"
+          },
+          "parsedLine": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sanLine": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parseStatus": {
+            "enum": [
+              "ok",
+              "last_line",
+              "san_converted",
+              "loose",
+              "missing",
+              "ambiguous",
+              "invalid_format",
+              "truncated",
+              "illegal_move",
+              "request_error"
+            ]
+          },
+          "formatValid": {
+            "type": "boolean"
+          },
+          "correctStrict": {
+            "type": "boolean"
+          },
+          "thinkingText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "latencyMs": {
+            "type": "number",
+            "minimum": 0
+          },
           "usage": {
             "type": "object",
             "required": [
@@ -95,16 +242,239 @@
               "cost"
             ],
             "properties": {
-              "promptTokens": { "type": "integer", "minimum": 0 },
-              "completionTokens": { "type": "integer", "minimum": 0 },
-              "reasoningTokens": { "type": "integer", "minimum": 0 },
-              "totalTokens": { "type": "integer", "minimum": 0 },
-              "cost": { "type": "number", "minimum": 0 }
+              "promptTokens": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "completionTokens": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "reasoningTokens": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "totalTokens": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "cost": {
+                "type": "number",
+                "minimum": 0
+              }
             }
           },
           "responseError": {
-            "type": ["object", "null"]
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "matchType": {
+            "enum": [
+              "exact",
+              "checkmate",
+              null
+            ]
+          },
+          "firstMoveCorrect": {
+            "type": "boolean"
+          },
+          "illegalMove": {
+            "type": "boolean"
+          },
+          "failedAtTurn": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "finishReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "turns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "turn",
+                "fen",
+                "rawOutput",
+                "parsedMove",
+                "expectedMove",
+                "parseStatus",
+                "legal",
+                "correct",
+                "usage"
+              ],
+              "properties": {
+                "turn": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "fen": {
+                  "type": "string"
+                },
+                "prompt": {
+                  "type": "string"
+                },
+                "rawOutput": {
+                  "type": "string"
+                },
+                "parsedMove": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "move": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "san": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "expectedMove": {
+                  "type": "string"
+                },
+                "parseStatus": {
+                  "type": "string"
+                },
+                "formatValid": {
+                  "type": "boolean"
+                },
+                "legal": {
+                  "type": "boolean"
+                },
+                "correct": {
+                  "type": "boolean"
+                },
+                "matchType": {
+                  "enum": [
+                    "exact",
+                    "checkmate",
+                    null
+                  ]
+                },
+                "finishReason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "nativeFinishReason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "servedModel": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "servedProvider": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "generationId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "latencyMs": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "usage": {
+                  "type": "object"
+                }
+              }
+            }
           }
+        }
+      }
+    },
+    "servedBy": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "description": "Turn counts per 'provider / served model version'."
+    },
+    "config": {
+      "type": "object",
+      "required": [
+        "harnessVersion",
+        "harnessHash",
+        "protocol",
+        "maxTokens"
+      ],
+      "properties": {
+        "harnessVersion": {
+          "type": "integer"
+        },
+        "harnessHash": {
+          "type": "string"
+        },
+        "gitCommit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harnessFilesDirty": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "protocol": {
+          "const": "lichess-move-by-move"
+        },
+        "revealTheme": {
+          "type": "boolean"
+        },
+        "temperature": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxTokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reasoning": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "apiModelId": {
+          "type": "string"
+        },
+        "providerOrder": {
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "model": {
+          "type": "object"
         }
       }
     }

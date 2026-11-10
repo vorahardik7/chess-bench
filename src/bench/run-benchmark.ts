@@ -2,26 +2,58 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 // @ts-nocheck
 
+/**
+ * Benchmark harness v2: Lichess-style puzzle solving.
+ *
+ * For each puzzle the model sees the position after the opponent's setup move and
+ * answers with ONE move. A correct move (or any checkmate) is followed by the
+ * opponent's reply from the stored Lichess solution and the model is asked for its
+ * next move, until the solution is complete. A puzzle is solved only if every move
+ * the model plays is correct. See scoring.ts for the exact move rules.
+ */
+
+import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Chess } from "chess.js";
 import OpenAI from "openai";
 import { envString, envTrimmed, loadBenchEnv } from "./env";
-import { buildUserPrompt, SYSTEM_PROMPT } from "./prompt";
+import { buildFirstTurnPrompt, buildFollowUpPrompt, SYSTEM_PROMPT } from "./prompt";
+import {
+  judgeMove,
+  normalizeLine,
+  parseMoveOutput,
+  playMove,
+  summarizeAttempts,
+  uciToSan,
+  UNPARSED_STATUSES,
+} from "./scoring";
 import benchConfig from "./config";
+
+// Bump when anything that affects scores changes (prompt, parsing, grading, protocol).
+const HARNESS_VERSION = 2;
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const SAKANA_BASE_URL = "https://api.sakana.ai/v1";
 const DATASET_PATH = path.resolve(process.cwd(), "src/bench/data/puzzles.json");
-const RESULTS_DIR = path.resolve(process.cwd(), "src/bench/results");
-const MAX_TOKENS = 400;
-const MAX_TOKENS_REASONING = 8192;
+// v1 results (single-shot full-line answers) stay in src/bench/results and in the
+// `bench-v1` git tag. v2 results are kept apart so the two are never mixed.
+const RESULTS_DIR = path.resolve(process.cwd(), "src/bench/results-v2");
+const HARNESS_FILES = ["src/bench/run-benchmark.ts", "src/bench/prompt.ts", "src/bench/scoring.ts"];
+// One output cap for every reasoning effort and every turn. On OpenRouter, reasoning
+// tokens count against max_tokens, and for Anthropic models the thinking budget is a
+// fixed share of it (medium 50%, high 80%, xhigh/max 95%). Too small a cap cuts models
+// off mid-thought (empty answer, scored as wrong) and hits higher efforts hardest.
+// Keep it identical across runs you compare; override via config.maxTokens.
+const DEFAULT_MAX_TOKENS_REASONING = 32768;
+const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_REQUEST_TIMEOUT_MS = 600000;
 const REASONING_EFFORT = "medium";
-const MISSING_OUTPUT_RETRY_ATTEMPTS = 0;
 const RETRIES = 4;
-const RETRY_BASE_MS = 1200;
-const STORE_RAW_RESPONSE = false;
+const RETRY_BASE_MS = 2000;
+const MAX_RETRY_WAIT_MS = 120000;
+const FATAL_STATUSES = [400, 401, 402, 403, 404];
 const CONCURRENCY = 10;
 const IN_PROGRESS_SUFFIX = ".in-progress.tmp";
 
@@ -57,9 +89,11 @@ let baseModelId = "";
 let variantId = "";
 let apiModelId = "";
 let modelName = "";
-let modelSupportedParams = new Set();
+let modelInfo = null;
 let reasoningEffort = REASONING_EFFORT;
 let useReasoning = false;
+let maxTokens = DEFAULT_MAX_TOKENS_REASONING;
+let temperature = null;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -85,8 +119,8 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function sanitizeModelId(modelId) {
-  return modelId.replace(/[^a-zA-Z0-9._-]+/g, "__");
+function sanitizeModelId(id) {
+  return id.replace(/[^a-zA-Z0-9._-]+/g, "__");
 }
 
 function resolveResultsModelId(baseId, variant) {
@@ -100,188 +134,46 @@ function inProgressPath(modelResultsDir, datasetId) {
   return path.join(modelResultsDir, `${sanitizeModelId(datasetId || "unknown")}${IN_PROGRESS_SUFFIX}`);
 }
 
-function displayModelName(modelId) {
-  return modelName || modelId;
-}
-
 function resolveApiProvider(providerId) {
   const normalized = String(providerId || "openrouter").trim().toLowerCase();
   const provider = API_PROVIDERS[normalized];
-  assert(
-    provider,
-    `Unsupported benchmark API provider "${providerId}". Use "openrouter" or "sakana".`
-  );
+  assert(provider, `Unsupported benchmark API provider "${providerId}". Use "openrouter" or "sakana".`);
   return provider;
 }
 
-function normalizeLine(line) {
-  return String(line).trim().toLowerCase().replace(/\s+/g, " ");
+function hashShort(input) {
+  return createHash("sha256").update(input).digest("hex").slice(0, 8);
 }
 
-function buildRepairPrompt(originalUserPrompt, requiredPlies) {
-  return `${originalUserPrompt}
+// ---------------------------------------------------------------------------
+// Provenance: what exactly produced a run.
 
-IMPORTANT:
-Your previous response did not include a valid final move line.
-Return ONLY exactly ${requiredPlies} lowercase UCI move(s), separated by one space.
-No analysis. No explanations.`;
-}
-
-function isUciMove(token) {
-  return /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(token);
-}
-
-function stripCodeFences(text) {
-  return text.replace(/```[\w]*\n?/g, "").replace(/```/g, "").trim();
-}
-
-function stripSanSymbols(text) {
-  return text
-    .replace(/[+#!?]+/g, "")
-    .replace(/\bx/gi, "")
-    .replace(/\d+\.\s*/g, "");
-}
-
-function normalizeSanToken(token) {
-  let t = token.replace(/[+#!?]+$/, "");
-  if (/^O-O/i.test(t)) return t.replace(/o/gi, (m) => "O");
-  if (/^[kqrbn][a-h1-8x]/i.test(t) && t.length > 1) {
-    t = t[0].toUpperCase() + t.slice(1);
+async function harnessHash() {
+  const hash = createHash("sha256");
+  for (const file of HARNESS_FILES) {
+    hash.update(file);
+    hash.update(await readFile(path.resolve(process.cwd(), file), "utf8"));
   }
-  if (/=[qrbn]$/i.test(t)) {
-    t = t.slice(0, -1) + t.slice(-1).toUpperCase();
-  }
-  return t;
+  return hash.digest("hex").slice(0, 12);
 }
 
-function tryParseSanWithChess(rawText, fen, requiredPlies) {
-  if (!fen || !rawText) return null;
-
-  let cleaned = stripCodeFences(rawText);
-  cleaned = cleaned.replace(/[\n\r]+/g, " ").trim();
-  const sanCandidates = cleaned.split(/[\s,]+/).filter(Boolean);
-
-  const sanPattern = /^[KQRBNP]?[a-h]?[1-8]?x?[a-h][1-8](=[QRBN])?[+#]?$/i;
-  const castlePattern = /^O-O(-O)?[+#]?$/i;
-  const pawnPattern = /^[a-h][1-8](=[QRBN])?[+#]?$/i;
-
-  const moveTokens = sanCandidates.filter(
-    (t) => sanPattern.test(t) || castlePattern.test(t) || pawnPattern.test(t)
-  );
-
-  if (moveTokens.length < requiredPlies) return null;
-
-  const chess = new Chess(fen);
-  const uciMoves = [];
-  const sanMoves = [];
-
-  for (let i = 0; i < moveTokens.length && uciMoves.length < requiredPlies; i++) {
-    const normalized = normalizeSanToken(moveTokens[i]);
-    try {
-      const result = chess.move(normalized);
-      if (!result) continue;
-      const uci = result.from + result.to + (result.promotion ?? "");
-      uciMoves.push(uci);
-      sanMoves.push(result.san);
-    } catch {
-      continue;
-    }
-  }
-
-  if (uciMoves.length !== requiredPlies) return null;
-  return { uci: uciMoves.join(" "), san: sanMoves.join(" ") };
-}
-
-function uciLineToSan(uciLine, fen) {
-  if (!uciLine || !fen) return null;
+function gitInfo() {
   try {
-    const chess = new Chess(fen);
-    const tokens = uciLine.trim().split(/\s+/);
-    const sanMoves = [];
-    for (const token of tokens) {
-      const from = token.slice(0, 2);
-      const to = token.slice(2, 4);
-      const promotion = token[4] ?? undefined;
-      const result = chess.move({ from, to, promotion });
-      if (!result) return null;
-      sanMoves.push(result.san);
-    }
-    return sanMoves.join(" ");
+    const commit = execSync("git rev-parse HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    const dirty =
+      execSync(`git status --porcelain -- ${HARNESS_FILES.join(" ")} src/bench/data/puzzles.json`, {
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim().length > 0;
+    return { commit, harnessFilesDirty: dirty };
   } catch {
-    return null;
+    return { commit: null, harnessFilesDirty: null };
   }
 }
 
-function parseLineStrict(candidate, requiredPlies) {
-  const normalized = normalizeLine(candidate);
-  if (!normalized) {
-    return { parsedLine: null, parseStatus: "missing", formatValid: false };
-  }
-
-  const tokens = normalized.split(" ");
-  if (tokens.length !== requiredPlies) {
-    return {
-      parsedLine: null,
-      parseStatus: "invalid_count",
-      formatValid: false,
-    };
-  }
-  if (!tokens.every(isUciMove)) {
-    return {
-      parsedLine: null,
-      parseStatus: "invalid_uci",
-      formatValid: false,
-    };
-  }
-  return {
-    parsedLine: tokens.join(" "),
-    parseStatus: "ok",
-    formatValid: true,
-  };
-}
-
-function parseBenchmarkOutput(raw, requiredPlies, currentFen = null) {
-  const text = String(raw ?? "");
-
-  // Step 1: Strip code fences and try strict parse on cleaned text
-  const cleaned = stripCodeFences(text);
-  const singleLine = normalizeLine(cleaned);
-  const strictParsed = parseLineStrict(singleLine, requiredPlies);
-  if (strictParsed.parsedLine) {
-    const san = currentFen ? uciLineToSan(strictParsed.parsedLine, currentFen) : null;
-    return { ...strictParsed, sanLine: san, thinkingText: null };
-  }
-
-  // Step 2: Loose UCI extraction — look for exactly requiredPlies UCI tokens
-  const looseTokens = (cleaned.toLowerCase().match(/[a-h][1-8][a-h][1-8][qrbn]?/g) ?? []);
-  if (looseTokens.length === requiredPlies && looseTokens.every(isUciMove)) {
-    const uciLine = looseTokens.join(" ");
-    const san = currentFen ? uciLineToSan(uciLine, currentFen) : null;
-    return {
-      parsedLine: uciLine,
-      sanLine: san,
-      parseStatus: `loose_${strictParsed.parseStatus}`,
-      formatValid: false,
-      thinkingText: null,
-    };
-  }
-
-  // Step 3: SAN-to-UCI conversion using chess.js and the board position
-  if (currentFen) {
-    const sanResult = tryParseSanWithChess(cleaned, currentFen, requiredPlies);
-    if (sanResult) {
-      return {
-        parsedLine: sanResult.uci,
-        sanLine: sanResult.san,
-        parseStatus: "san_converted",
-        formatValid: false,
-        thinkingText: null,
-      };
-    }
-  }
-
-  return { ...strictParsed, sanLine: null, thinkingText: null };
-}
+// ---------------------------------------------------------------------------
+// Response extraction.
 
 function extractMessageText(messageContent) {
   if (typeof messageContent === "string") return messageContent;
@@ -314,25 +206,18 @@ function extractReasoningFromDetails(details) {
 function extractApiReasoning(choice) {
   const detailsText = extractReasoningFromDetails(choice?.message?.reasoning_details);
   if (detailsText) return detailsText;
-
-  const reasoningCandidates = [
+  const candidates = [
     choice?.message?.reasoning,
     choice?.message?.reasoning_content,
     choice?.message?.analysis,
     choice?.reasoning,
   ];
-  for (const candidate of reasoningCandidates) {
+  for (const candidate of candidates) {
     if (!candidate) continue;
     if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
     if (Array.isArray(candidate)) {
       const text = candidate
-        .map((item) => {
-          if (typeof item === "string") return item;
-          if (item && typeof item === "object" && typeof item.text === "string") {
-            return item.text;
-          }
-          return "";
-        })
+        .map((item) => (typeof item === "string" ? item : typeof item?.text === "string" ? item.text : ""))
         .join("\n")
         .trim();
       if (text) return text;
@@ -341,336 +226,100 @@ function extractApiReasoning(choice) {
   return null;
 }
 
-function hashShort(input) {
-  return createHash("sha256").update(input).digest("hex").slice(0, 8);
+function extractUsage(resp) {
+  const usage = resp?.usage ?? {};
+  const promptTokens = toInt(usage.prompt_tokens, 0);
+  const completionTokens = toInt(usage.completion_tokens, 0);
+  const reasoningTokens = toInt(usage?.completion_tokens_details?.reasoning_tokens ?? usage.reasoning_tokens, 0);
+  const totalTokens = toInt(usage.total_tokens, promptTokens + completionTokens);
+  // For BYOK, OpenRouter reports the provider-billed amount in cost_details.upstream_inference_cost;
+  // usage.cost is what was charged to OpenRouter credits (0 or just the BYOK fee).
+  const upstreamInferenceCost = finiteNumberOrNull(usage?.cost_details?.upstream_inference_cost);
+  const cost = upstreamInferenceCost ?? toNumber(usage.cost, 0);
+  return { promptTokens, completionTokens, reasoningTokens, totalTokens, cost };
 }
 
-const PROMOTION_ROLE_MAP = {
-  q: "queen",
-  r: "rook",
-  b: "bishop",
-  n: "knight",
-};
-
-function fileIndex(square) {
-  return square.charCodeAt(0) - 97;
-}
-
-function square(file, rank) {
-  return `${String.fromCharCode(97 + file)}${rank}`;
-}
-
-function parseFenBoard(boardPart) {
-  const pieces = new Map();
-  let rank = 8;
-  let file = 0;
-  for (const char of boardPart) {
-    if (char === "/") {
-      rank -= 1;
-      file = 0;
-      continue;
-    }
-    if (/[1-8]/.test(char)) {
-      file += Number.parseInt(char, 10);
-      continue;
-    }
-    pieces.set(square(file, rank), {
-      color: char === char.toLowerCase() ? "black" : "white",
-      role: ({
-        p: "pawn",
-        n: "knight",
-        b: "bishop",
-        r: "rook",
-        q: "queen",
-        k: "king",
-      })[char.toLowerCase()],
-    });
-    file += 1;
-  }
-  return pieces;
-}
-
-function pieceToChar(piece) {
-  const char = ({
-    pawn: "p",
-    knight: "n",
-    bishop: "b",
-    rook: "r",
-    queen: "q",
-    king: "k",
-  })[piece.role] ?? "?";
-  return piece.color === "white" ? char.toUpperCase() : char;
-}
-
-function renderAsciiBoard(fen) {
-  const boardPart = fen.trim().split(/\s+/)[0] ?? "";
-  const pieces = parseFenBoard(boardPart);
-  const lines = [];
-  for (let rank = 8; rank >= 1; rank -= 1) {
-    const cells = [];
-    for (let file = 0; file < 8; file += 1) {
-      const piece = pieces.get(square(file, rank));
-      cells.push(piece ? pieceToChar(piece) : ".");
-    }
-    lines.push(`${rank} ${cells.join(" ")}`);
-  }
-  lines.push("  a b c d e f g h");
-  return lines.join("\n");
-}
-
-function serializeFenBoard(pieces) {
-  const rows = [];
-  for (let rank = 8; rank >= 1; rank -= 1) {
-    let row = "";
-    let empty = 0;
-    for (let file = 0; file < 8; file += 1) {
-      const piece = pieces.get(square(file, rank));
-      if (!piece) {
-        empty += 1;
-        continue;
-      }
-      if (empty > 0) {
-        row += String(empty);
-        empty = 0;
-      }
-      const char = ({
-        pawn: "p",
-        knight: "n",
-        bishop: "b",
-        rook: "r",
-        queen: "q",
-        king: "k",
-      })[piece.role];
-      row += piece.color === "white" ? char.toUpperCase() : char;
-    }
-    if (empty > 0) row += String(empty);
-    rows.push(row);
-  }
-  return rows.join("/");
-}
-
-function normalizeCastling(castling) {
-  return castling && castling !== "-" ? castling : "";
-}
-
-function denormalizeCastling(castling) {
-  return castling ? castling : "-";
-}
-
-function stripCastling(castling, rights) {
-  return [...normalizeCastling(castling)].filter((right) => !rights.includes(right)).join("");
-}
-
-function applyUciToFen(fen, move) {
-  if (!fen || !move || move.length < 4) return null;
-
-  const [
-    boardPart,
-    activeColor = "w",
-    castlingRaw = "-",
-    ,
-    halfmoveRaw = "0",
-    fullmoveRaw = "1",
-  ] = fen.trim().split(/\s+/);
-  const from = move.slice(0, 2);
-  const to = move.slice(2, 4);
-  const promotion = move[4]?.toLowerCase();
-  const pieces = parseFenBoard(boardPart);
-  const piece = pieces.get(from);
-  if (!piece) return null;
-
-  const targetPiece = pieces.get(to);
-  let castling = normalizeCastling(castlingRaw);
-  let enPassant = "-";
-
-  pieces.delete(from);
-
-  if (piece.role === "pawn" && from[0] !== to[0] && !targetPiece) {
-    pieces.delete(`${to[0]}${from[1]}`);
-  }
-
-  if (piece.role === "king") {
-    castling = stripCastling(castling, piece.color === "white" ? "KQ" : "kq");
-    if (Math.abs(fileIndex(from) - fileIndex(to)) === 2) {
-      const isKingSide = fileIndex(to) > fileIndex(from);
-      const rookFrom = `${isKingSide ? "h" : "a"}${from[1]}`;
-      const rookTo = `${isKingSide ? "f" : "d"}${from[1]}`;
-      const rook = pieces.get(rookFrom);
-      if (rook?.role === "rook" && rook.color === piece.color) {
-        pieces.delete(rookFrom);
-        pieces.set(rookTo, rook);
-      }
-    }
-  }
-
-  if (piece.role === "rook") {
-    if (from === "a1") castling = stripCastling(castling, "Q");
-    if (from === "h1") castling = stripCastling(castling, "K");
-    if (from === "a8") castling = stripCastling(castling, "q");
-    if (from === "h8") castling = stripCastling(castling, "k");
-  }
-
-  if (targetPiece?.role === "rook") {
-    if (to === "a1") castling = stripCastling(castling, "Q");
-    if (to === "h1") castling = stripCastling(castling, "K");
-    if (to === "a8") castling = stripCastling(castling, "q");
-    if (to === "h8") castling = stripCastling(castling, "k");
-  }
-
-  const movedPiece =
-    promotion && piece.role === "pawn"
-      ? { ...piece, role: PROMOTION_ROLE_MAP[promotion] ?? piece.role }
-      : piece;
-  pieces.set(to, movedPiece);
-
-  if (piece.role === "pawn" && Math.abs(Number(to[1]) - Number(from[1])) === 2) {
-    enPassant = `${from[0]}${(Number(from[1]) + Number(to[1])) / 2}`;
-  }
-
-  const halfmove =
-    piece.role === "pawn" || targetPiece
-      ? "0"
-      : String(Number.parseInt(halfmoveRaw, 10) + 1);
-  const fullmove =
-    activeColor === "b"
-      ? String(Number.parseInt(fullmoveRaw, 10) + 1)
-      : fullmoveRaw;
-  const nextTurn = activeColor === "w" ? "b" : "w";
-
-  return `${serializeFenBoard(pieces)} ${nextTurn} ${denormalizeCastling(castling)} ${enPassant} ${halfmove} ${fullmove}`;
-}
-
-function applyUciWithChessJs(fen, uciMove) {
+async function fetchGenerationCost(generationId) {
+  if (!apiProvider.supportsGenerationCost) return 0;
   try {
-    const chess = new Chess(fen);
-    const from = uciMove.slice(0, 2);
-    const to = uciMove.slice(2, 4);
-    const promotion = uciMove[4] ?? undefined;
-    chess.move({ from, to, promotion });
-    return chess.fen();
+    const res = await fetch(`${apiBaseURL}/generation?id=${generationId}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!res.ok) return 0;
+    const json = await res.json();
+    return finiteNumberOrNull(json?.data?.upstream_inference_cost) ?? toNumber(json?.data?.total_cost, 0);
   } catch {
-    return null;
+    return 0;
   }
 }
 
-function getPromptContext(puzzle) {
-  const sourceFen = puzzle.fen;
-  const currentFen =
-    applyUciWithChessJs(sourceFen, puzzle.initialMove) ??
-    applyUciToFen(sourceFen, puzzle.initialMove) ??
-    sourceFen;
-  const sideToMove = currentFen.split(/\s+/)[1] === "b" ? "Black" : "White";
-  const boardAscii = renderAsciiBoard(currentFen);
-  return {
-    sourceFen,
-    currentFen,
-    sideToMove,
-    boardAscii,
-  };
+async function extractUsageWithCost(response) {
+  const usage = extractUsage(response);
+  if (usage.cost === 0 && response?.id) usage.cost = await fetchGenerationCost(response.id);
+  return usage;
 }
 
-function formatTrackLabel(track) {
-  if (track === "mateIn1" || track === "mate1") return "Mate in 1";
-  if (track === "mateIn2" || track === "mate2") return "Mate in 2";
-  if (track === "hangingPiece") return "Hanging Piece";
-  return String(track)
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/[-_]/g, " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
+function addUsage(total, extra) {
+  total.promptTokens += extra.promptTokens;
+  total.completionTokens += extra.completionTokens;
+  total.reasoningTokens += extra.reasoningTokens;
+  total.totalTokens += extra.totalTokens;
+  total.cost += extra.cost;
 }
 
-function getTaskDescription(track, requiredPlies) {
-  if (track === "mateIn1" || track === "mate1") {
-    return "Find the move that gives checkmate immediately.";
-  }
-  if (track === "mateIn2" || track === "mate2") {
-    return "Find the forced mate in 2 from the current position.";
-  }
-  return `Find the best continuation line of exactly ${requiredPlies} plies from the current position.`;
-}
+// ---------------------------------------------------------------------------
+// Model metadata and request construction.
 
-function createUserPrompt(puzzle) {
-  const context = getPromptContext(puzzle);
-  return buildUserPrompt({
-    puzzleId: puzzle.puzzleId,
-    trackLabel: formatTrackLabel(puzzle.track),
-    ratingBucket: puzzle.ratingBucket,
-    rating: puzzle.rating,
-    currentFen: context.currentFen,
-    sideToMove: context.sideToMove,
-    boardAscii: context.boardAscii,
-    requiredPlies: puzzle.requiredPlies,
-    taskDescription: getTaskDescription(puzzle.track, puzzle.requiredPlies),
-  });
-}
-
-async function fetchModelMetadata() {
-  const url = `${apiBaseURL}/models`;
-  const headers = { Accept: "application/json" };
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-  const res = await fetch(url, { headers });
-  if (!res.ok) {
-    throw new Error(`Unable to fetch model metadata (${res.status} ${res.statusText})`);
-  }
-  const body = await res.json();
-  const rows = Array.isArray(body?.data) ? body.data : [];
-  return rows;
-}
-
-async function loadSupportedParameters(modelId) {
+async function loadModelInfo(id) {
   if (Array.isArray(benchConfig.supportedParams)) {
-    return new Set(benchConfig.supportedParams);
+    return { supportedParams: new Set(benchConfig.supportedParams), source: "config" };
   }
   if (!apiProvider.supportsModelMetadata) {
-    return new Set(apiProvider.defaultSupportedParams ?? []);
+    return { supportedParams: new Set(apiProvider.defaultSupportedParams ?? []), source: "provider-default" };
   }
 
+  let rows;
   try {
-    const models = await fetchModelMetadata();
-    const row = models.find((m) => m?.id === modelId);
-    if (!row) {
-      console.warn(`Warning: model "${modelId}" not found in /models; skipping parameter validation.`);
-      return new Set();
-    }
-
-    const supported = new Set(Array.isArray(row.supported_parameters) ? row.supported_parameters : []);
-    const expected = ["max_tokens"];
-    const missing = expected.filter((param) => !supported.has(param));
-    if (missing.length > 0) {
-      console.warn(
-        `Warning: model "${modelId}" does not list support for [${missing.join(", ")}]. Benchmark may be inconsistent.`
-      );
-    }
-    return supported;
+    const headers = { Accept: "application/json" };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    const res = await fetch(`${apiBaseURL}/models`, { headers });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    const body = await res.json();
+    rows = Array.isArray(body?.data) ? body.data : [];
   } catch (error) {
-    console.warn(
-      `Warning: supported parameter lookup failed (${error instanceof Error ? error.message : String(error)}). Continuing without temperature.`
+    throw new Error(
+      `Model metadata lookup failed (${error instanceof Error ? error.message : String(error)}). Set supportedParams in config.ts to skip it.`
     );
-    return new Set();
   }
+
+  // Without metadata we can't tell whether to send `reasoning`, and silently running
+  // without it produces a misleading score.
+  const row = rows.find((m) => m?.id === id);
+  assert(row, `Model "${id}" not found in ${apiProvider.label} /models. Check the slug, or set supportedParams in config.ts.`);
+  return {
+    supportedParams: new Set(Array.isArray(row.supported_parameters) ? row.supported_parameters : []),
+    canonicalSlug: row.canonical_slug ?? null,
+    supportedEfforts: Array.isArray(row.reasoning?.supported_efforts) ? row.reasoning.supported_efforts : null,
+    defaultEffort: row.reasoning?.default_effort ?? null,
+    maxCompletionTokens: finiteNumberOrNull(row.top_provider?.max_completion_tokens),
+    source: "models-endpoint",
+  };
 }
 
-function buildCompletionBody({ modelId, systemPrompt, userPrompt }) {
-  const body = {
-    model: modelId,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ],
-    max_tokens: useReasoning ? MAX_TOKENS_REASONING : MAX_TOKENS,
-  };
+function buildRequest(messages) {
+  const body = { model: apiModelId, messages, max_tokens: maxTokens };
   if (apiProvider.id === "openrouter") {
     body.provider = {
       allow_fallbacks: false,
       ...(benchConfig.providerOrder ? { order: benchConfig.providerOrder } : {}),
     };
   }
-  if (modelSupportedParams.has("temperature")) {
-    body.temperature = benchConfig.temperature ?? 0;
-  }
-  if (useReasoning) {
-    body.reasoning = { effort: reasoningEffort };
-  }
+  // Sampling parameters are left at provider defaults unless explicitly configured:
+  // OpenAI/Anthropic reasoning models reject them, and Google documents them as
+  // ignored (and future-400) for current Gemini models, so forcing temperature 0
+  // would only apply to some vendors.
+  if (temperature !== null) body.temperature = temperature;
+  if (useReasoning) body.reasoning = { effort: reasoningEffort };
   return body;
 }
 
@@ -689,105 +338,309 @@ function apiErrorBody(error) {
   }
 }
 
+function retryAfterMs(error) {
+  const headers = error?.headers;
+  const raw = typeof headers?.get === "function" ? headers.get("retry-after") : headers?.["retry-after"];
+  if (!raw) return null;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds)) return seconds * 1000;
+  const date = Date.parse(raw);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null;
+}
+
+/**
+ * OpenRouter can answer HTTP 200 with an error instead of a completion: a top-level
+ * `error`, a choice with `error` / finish_reason "error", or an empty choice with zero
+ * usage. These are provider failures, not model answers, so they are retried.
+ */
+function assertUsableCompletion(response) {
+  const choice = response?.choices?.[0];
+  const providerError = response?.error ?? choice?.error;
+  let reason = null;
+  if (providerError) reason = providerError.message ?? JSON.stringify(providerError);
+  else if (!choice) reason = "response has no choices";
+  else if (choice.finish_reason === "error") reason = `finish_reason "error" (native: ${choice.native_finish_reason ?? "n/a"})`;
+  else if (!extractMessageText(choice.message?.content) && toInt(response?.usage?.completion_tokens, 0) === 0) {
+    reason = "empty completion with zero completion tokens";
+  }
+  if (reason) {
+    const error = new Error(`Provider returned an unusable completion: ${reason}`);
+    error.status = 0; // retryable
+    throw error;
+  }
+}
+
 async function postCompletion(body) {
   for (let attempt = 0; attempt <= RETRIES; attempt += 1) {
     try {
-      return await apiClient.chat.completions.create(body);
+      const response = await apiClient.chat.completions.create(body);
+      assertUsableCompletion(response);
+      return response;
     } catch (error) {
       const status = apiErrorStatus(error);
       const retryable = status === 0 || [408, 409, 429, 500, 502, 503, 504].includes(status);
       if (!retryable || attempt === RETRIES) {
         const bodyText = apiErrorBody(error);
-        const statusText = status || "unknown";
         const detail = bodyText ? `. Body: ${bodyText.slice(0, 400)}` : "";
-        throw new Error(
-          `${apiProvider.label} error ${statusText}: ${error instanceof Error ? error.message : String(error)}${detail}`
+        const wrapped = new Error(
+          `${apiProvider.label} error ${status || "unknown"}: ${error instanceof Error ? error.message : String(error)}${detail}`
         );
+        // Bad request / auth / credits / unknown model fail the same way for every
+        // puzzle, so stop the run instead of recording 150 request errors.
+        wrapped.fatal = FATAL_STATUSES.includes(status);
+        throw wrapped;
       }
-
-      const waitMs = RETRY_BASE_MS * 2 ** attempt;
-      await delay(waitMs);
+      const backoff = RETRY_BASE_MS * 2 ** attempt * (0.75 + Math.random() * 0.5);
+      await delay(Math.min(MAX_RETRY_WAIT_MS, retryAfterMs(error) ?? backoff));
     }
   }
-
   throw new Error("Unreachable retry state.");
 }
 
-async function fetchGenerationCost(generationId: string): Promise<number> {
-  if (!apiProvider.supportsGenerationCost) {
-    return 0;
-  }
-  try {
-    const res = await fetch(
-      `${apiBaseURL}/generation?id=${generationId}`,
-      { headers: { Authorization: `Bearer ${apiKey}` } }
-    );
-    if (!res.ok) return 0;
-    const json = await res.json();
-    const upstreamInferenceCost = finiteNumberOrNull(json?.data?.upstream_inference_cost);
-    return upstreamInferenceCost ?? toNumber(json?.data?.total_cost, 0);
-  } catch {
-    return 0;
-  }
+// ---------------------------------------------------------------------------
+// Puzzle presentation.
+
+function renderAsciiBoard(chess) {
+  const lines = chess.board().map((row, i) => {
+    const cells = row.map((sq) => (sq ? (sq.color === "w" ? sq.type.toUpperCase() : sq.type) : "."));
+    return `${8 - i} ${cells.join(" ")}`;
+  });
+  lines.push("  a b c d e f g h");
+  return lines.join("\n");
 }
 
-async function extractUsageWithCost(response) {
-  const usage = extractUsage(response);
-  if (usage.cost === 0 && response?.id) {
-    usage.cost = await fetchGenerationCost(response.id);
-  }
-  return usage;
-}
-
-function extractUsage(resp) {
-  const usage = resp?.usage ?? {};
-  const promptTokens = toInt(usage.prompt_tokens, 0);
-  const completionTokens = toInt(usage.completion_tokens, 0);
-  const reasoningTokens = toInt(
-    usage?.completion_tokens_details?.reasoning_tokens ?? usage.reasoning_tokens,
-    0
-  );
-  const totalTokens = toInt(usage.total_tokens, promptTokens + completionTokens);
-  // For BYOK, OpenRouter returns the provider-billed amount in usage.cost_details.upstream_inference_cost.
-  // usage.cost is the amount charged to OpenRouter credits, so it may be 0 or only reflect the BYOK platform fee.
-  const upstreamInferenceCost = finiteNumberOrNull(usage?.cost_details?.upstream_inference_cost);
-  const cost = upstreamInferenceCost ?? toNumber(usage.cost, 0);
-  return { promptTokens, completionTokens, reasoningTokens, totalTokens, cost };
-}
-
-function mergeUsageTotals(base, extra) {
-  base.promptTokens += extra.promptTokens;
-  base.completionTokens += extra.completionTokens;
-  base.reasoningTokens += extra.reasoningTokens;
-  base.totalTokens += extra.totalTokens;
-  base.cost += extra.cost;
-}
-
-function summarizeAttempts(attempts) {
-  const total = attempts.length;
-  const parsed = attempts.filter((a) => a.parsedLine).length;
-  const correctStrict = attempts.filter((a) => a.correctStrict).length;
-  const sanConverted = attempts.filter((a) => a.parseStatus === "san_converted").length;
-  const totalPromptTokens = attempts.reduce((sum, a) => sum + a.usage.promptTokens, 0);
-  const totalCompletionTokens = attempts.reduce((sum, a) => sum + a.usage.completionTokens, 0);
-  const totalReasoningTokens = attempts.reduce((sum, a) => sum + a.usage.reasoningTokens, 0);
-  const totalCost = attempts.reduce((sum, a) => sum + a.usage.cost, 0);
-  const averageLatencyMs =
-    total === 0 ? 0 : attempts.reduce((sum, a) => sum + a.latencyMs, 0) / total;
+function positionView(fen) {
+  const chess = new Chess(fen);
   return {
-    total,
-    parsed,
-    sanConverted,
-    correctStrict,
-    accuracyStrict: total === 0 ? 0 : correctStrict / total,
-    accuracyParsed: parsed === 0 ? 0 : correctStrict / parsed,
-    totalPromptTokens,
-    totalCompletionTokens,
-    totalReasoningTokens,
-    totalCost,
-    averageLatencyMs,
+    fen,
+    sideToMove: chess.turn() === "w" ? "White" : "Black",
+    boardAscii: renderAsciiBoard(chess),
   };
 }
+
+function formatTrackLabel(track) {
+  if (track === "mateIn1" || track === "mate1") return "Mate in 1";
+  if (track === "mateIn2" || track === "mate2") return "Mate in 2";
+  if (track === "hangingPiece") return "Hanging Piece";
+  return String(track)
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[-_]/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function taskDescription(track, revealTheme) {
+  if (revealTheme && (track === "mateIn1" || track === "mate1")) return "Find the move that checkmates immediately.";
+  if (revealTheme && (track === "mateIn2" || track === "mate2")) return "Find the forced checkmate in two moves.";
+  return "Find the best move.";
+}
+
+/** Position the model starts from: the stored FEN after the opponent's setup move. */
+function puzzleStart(puzzle) {
+  const played = playMove(puzzle.fen, puzzle.initialMove);
+  assert(played, `Puzzle ${puzzle.puzzleId}: setup move ${puzzle.initialMove} is illegal in ${puzzle.fen}.`);
+  const solution = normalizeLine(puzzle.expectedLine).split(" ");
+  // Validate the whole stored solution up front so a data error can't masquerade as a model miss.
+  let fen = played.chess.fen();
+  const sanLine = [];
+  for (const move of solution) {
+    const step = playMove(fen, move);
+    assert(step, `Puzzle ${puzzle.puzzleId}: stored solution move ${move} is illegal.`);
+    sanLine.push(step.san);
+    fen = step.chess.fen();
+  }
+  return { fen: played.chess.fen(), lastMoveUci: puzzle.initialMove, lastMoveSan: played.san, solution, expectedSanLine: sanLine.join(" ") };
+}
+
+// ---------------------------------------------------------------------------
+// Solving one puzzle.
+
+function attemptParseStatus(turns) {
+  const last = turns[turns.length - 1];
+  if (last && !last.correct) {
+    if (UNPARSED_STATUSES.has(last.parseStatus)) return last.parseStatus;
+    if (!last.legal) return "illegal_move";
+  }
+  return turns.find((t) => t.parseStatus !== "ok")?.parseStatus ?? "ok";
+}
+
+function joinTurns(turns, key) {
+  const parts = turns.map((t) => t[key]).filter((v) => typeof v === "string" && v.length > 0);
+  if (parts.length === 0) return null;
+  if (turns.length === 1) return parts[0];
+  return turns
+    .filter((t) => typeof t[key] === "string" && t[key].length > 0)
+    .map((t) => `[Turn ${t.turn}]\n${t[key]}`)
+    .join("\n\n");
+}
+
+function solvePuzzle(puzzle, index, total, revealTheme) {
+  const start = puzzleStart(puzzle);
+  const view = positionView(start.fen);
+  const firstPrompt = buildFirstTurnPrompt({
+    trackLabel: revealTheme ? formatTrackLabel(puzzle.track) : null,
+    taskDescription: taskDescription(puzzle.track, revealTheme),
+    playerSide: view.sideToMove,
+    lastMoveUci: start.lastMoveUci,
+    lastMoveSan: start.lastMoveSan,
+    position: view,
+  });
+
+  const base = {
+    index,
+    puzzleId: puzzle.puzzleId,
+    track: puzzle.track,
+    ratingBucket: puzzle.ratingBucket,
+    sourceFen: puzzle.fen,
+    initialMove: puzzle.initialMove,
+    currentFen: start.fen,
+    sideToMove: view.sideToMove,
+    expectedLine: start.solution.join(" "),
+    expectedSanLine: start.expectedSanLine,
+  };
+
+  return async () => {
+    const started = Date.now();
+    const usage = { promptTokens: 0, completionTokens: 0, reasoningTokens: 0, totalTokens: 0, cost: 0 };
+    const turns = [];
+    const playedLine = [];
+    const thinking = [];
+    const messages = [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: firstPrompt },
+    ];
+
+    try {
+      let fen = start.fen;
+      let solved = false;
+      let matchType = null;
+
+      for (let ply = 0; ply < start.solution.length; ply += 2) {
+        const turnStarted = Date.now();
+        const response = await postCompletion(buildRequest(messages));
+        const choice = response.choices[0];
+        const rawOutput = extractMessageText(choice?.message?.content);
+        const turnUsage = await extractUsageWithCost(response);
+        addUsage(usage, turnUsage);
+
+        const parsed = parseMoveOutput(rawOutput, fen);
+        const finishReason = choice?.finish_reason ?? null;
+        // Hitting max_tokens is a harness limit, not a format failure.
+        const parseStatus = !parsed.move && finishReason === "length" ? "truncated" : parsed.parseStatus;
+        const expected = start.solution[ply];
+        const judged = judgeMove(fen, parsed.move, expected);
+
+        turns.push({
+          turn: turns.length + 1,
+          fen,
+          prompt: messages[messages.length - 1].content,
+          rawOutput,
+          parsedMove: parsed.move,
+          move: judged.move,
+          san: judged.san,
+          expectedMove: expected,
+          parseStatus,
+          formatValid: parsed.formatValid,
+          legal: judged.legal,
+          correct: judged.correct,
+          matchType: judged.matchType,
+          finishReason,
+          nativeFinishReason: choice?.native_finish_reason ?? null,
+          servedModel: response.model ?? null,
+          servedProvider: response.provider ?? null,
+          generationId: response.id ?? null,
+          latencyMs: Date.now() - turnStarted,
+          usage: turnUsage,
+        });
+        // Reasoning is stored once, on the attempt (joined per turn), to keep result files small.
+        thinking.push({ turn: turns.length, thinkingText: extractApiReasoning(choice) });
+        if (judged.legal) playedLine.push(judged.move);
+
+        if (!judged.correct) break;
+        if (judged.matchType === "checkmate" || ply + 1 >= start.solution.length) {
+          solved = true;
+          matchType = turns.some((t) => t.matchType === "checkmate") ? "checkmate" : "exact";
+          break;
+        }
+
+        // Correct, puzzle continues: play the stored opponent reply and ask for the next move.
+        const reply = start.solution[ply + 1];
+        const afterReply = playMove(judged.fenAfter, reply);
+        playedLine.push(afterReply.uci);
+        fen = afterReply.chess.fen();
+        messages.push({ role: "assistant", content: rawOutput });
+        messages.push({
+          role: "user",
+          content: buildFollowUpPrompt({ replyUci: reply, replySan: afterReply.san, position: positionView(fen) }),
+        });
+      }
+
+      const last = turns[turns.length - 1];
+      const parsedLine = playedLine.length > 0 ? playedLine.join(" ") : null;
+      const result = {
+        ...base,
+        rawOutput: joinTurns(turns, "rawOutput") ?? "",
+        parsedLine,
+        sanLine: parsedLine ? sanOfLine(start.fen, playedLine) : null,
+        parseStatus: attemptParseStatus(turns),
+        formatValid: turns.every((t) => t.formatValid),
+        correctStrict: solved,
+        matchType,
+        firstMoveCorrect: turns[0].correct,
+        illegalMove: turns.some((t) => t.parsedMove && !t.legal),
+        failedAtTurn: solved ? null : last.turn,
+        finishReason: last.finishReason,
+        thinkingText: joinTurns(thinking, "thinkingText"),
+        latencyMs: Date.now() - started,
+        usage,
+        responseError: null,
+        turns,
+      };
+      const note = result.parseStatus === "ok" ? "" : ` (${result.parseStatus})`;
+      console.log(
+        `[${index + 1}/${total}] ${puzzle.puzzleId} ${puzzle.track} ${puzzle.ratingBucket} -> ${solved ? "OK" : `MISS at turn ${last.turn}`}${note}`
+      );
+      return result;
+    } catch (error) {
+      if (error?.fatal) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[${index + 1}/${total}] ${puzzle.puzzleId} failed: ${message}`);
+      return {
+        ...base,
+        rawOutput: "",
+        parsedLine: null,
+        sanLine: null,
+        parseStatus: "request_error",
+        formatValid: false,
+        correctStrict: false,
+        matchType: null,
+        firstMoveCorrect: false,
+        illegalMove: false,
+        failedAtTurn: turns.length + 1,
+        finishReason: null,
+        thinkingText: null,
+        latencyMs: Date.now() - started,
+        usage,
+        responseError: { message },
+        turns,
+      };
+    }
+  };
+}
+
+function sanOfLine(fen, moves) {
+  const san = [];
+  let current = fen;
+  for (const move of moves) {
+    const step = playMove(current, move);
+    if (!step) break;
+    san.push(step.san);
+    current = step.chess.fen();
+  }
+  return san.join(" ");
+}
+
+// ---------------------------------------------------------------------------
+// Run orchestration.
 
 function sortAttemptsByIndex(attempts) {
   return [...attempts].sort((a, b) => toInt(a?.index, 0) - toInt(b?.index, 0));
@@ -796,293 +649,193 @@ function sortAttemptsByIndex(attempts) {
 function dedupeAttemptsByPuzzle(attempts) {
   const byPuzzleId = new Map();
   for (const attempt of attempts) {
-    const puzzleId = attempt?.puzzleId;
-    if (!puzzleId) continue;
-    byPuzzleId.set(puzzleId, attempt);
+    if (attempt?.puzzleId) byPuzzleId.set(attempt.puzzleId, attempt);
   }
   return sortAttemptsByIndex(Array.from(byPuzzleId.values()));
 }
 
-async function readInProgressCheckpoint(filePath, { modelId, datasetId }) {
+async function readInProgressCheckpoint(filePath, { modelId: id, datasetId }) {
   try {
-    const raw = await readFile(filePath, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(await readFile(filePath, "utf8"));
     if (!parsed || typeof parsed !== "object") return null;
-    if (parsed.modelId !== modelId || parsed.datasetId !== datasetId) return null;
-    const attempts = Array.isArray(parsed.attempts) ? parsed.attempts : [];
+    if (parsed.modelId !== id || parsed.datasetId !== datasetId) return null;
     return {
       runId: typeof parsed.runId === "string" ? parsed.runId : null,
       createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : null,
-      attempts,
+      config: parsed.config && typeof parsed.config === "object" ? parsed.config : null,
+      attempts: Array.isArray(parsed.attempts) ? parsed.attempts : [],
     };
   } catch {
     return null;
   }
 }
 
-function solvePuzzle(puzzle, index, total) {
-  const promptContext = getPromptContext(puzzle);
-  const expectedLine = normalizeLine(puzzle.expectedLine ?? "");
-  const expectedSanLine = uciLineToSan(expectedLine, promptContext.currentFen);
-  const userPrompt = createUserPrompt(puzzle);
-  const body = buildCompletionBody({
-    modelId: apiModelId,
-    systemPrompt: SYSTEM_PROMPT,
-    userPrompt,
-  });
-
-  return async () => {
-    const started = Date.now();
-    try {
-      const response = await postCompletion(body);
-      let choice = response?.choices?.[0] ?? null;
-      let rawOutput = extractMessageText(choice?.message?.content);
-      let apiReasoning = extractApiReasoning(choice);
-      const usage = await extractUsageWithCost(response);
-      let parsed = parseBenchmarkOutput(rawOutput, puzzle.requiredPlies, promptContext.currentFen);
-
-      for (let repairAttempt = 0; repairAttempt < MISSING_OUTPUT_RETRY_ATTEMPTS; repairAttempt += 1) {
-        if (parsed.parsedLine) break;
-
-        const repairBody = buildCompletionBody({
-          modelId: apiModelId,
-          systemPrompt: SYSTEM_PROMPT,
-          userPrompt: buildRepairPrompt(userPrompt, puzzle.requiredPlies),
-        });
-        // Repair turn should be short and final-answer-only.
-        repairBody.max_tokens = MAX_TOKENS;
-        delete repairBody.reasoning;
-
-        const repairResponse = await postCompletion(repairBody);
-        const repairChoice = repairResponse?.choices?.[0] ?? null;
-        const repairRawOutput = extractMessageText(repairChoice?.message?.content);
-        const repairReasoning = extractApiReasoning(repairChoice);
-        const repairUsage = await extractUsageWithCost(repairResponse);
-        mergeUsageTotals(usage, repairUsage);
-
-        const repairParsed = parseBenchmarkOutput(
-          repairRawOutput,
-          puzzle.requiredPlies,
-          promptContext.currentFen
-        );
-
-        if (!rawOutput && repairRawOutput) {
-          rawOutput = repairRawOutput;
-          choice = repairChoice;
-        }
-        if (!apiReasoning && repairReasoning) {
-          apiReasoning = repairReasoning;
-        }
-
-        if (repairParsed.parsedLine) {
-          rawOutput = repairRawOutput;
-          choice = repairChoice;
-          parsed = {
-            ...repairParsed,
-            parseStatus:
-              repairParsed.parseStatus === "ok"
-                ? "repair_ok"
-                : `repair_${repairParsed.parseStatus}`,
-            formatValid: false,
-          };
-          break;
-        }
-      }
-
-      const latencyMs = Date.now() - started;
-      const parsedLine = parsed.parsedLine;
-      const correctStrict = parsedLine ? normalizeLine(parsedLine) === expectedLine : false;
-
-      const result = {
-        index,
-        puzzleId: puzzle.puzzleId,
-        track: puzzle.track,
-        ratingBucket: puzzle.ratingBucket,
-        sourceFen: promptContext.sourceFen,
-        initialMove: puzzle.initialMove,
-        currentFen: promptContext.currentFen,
-        sideToMove: promptContext.sideToMove,
-        expectedLine,
-        expectedSanLine,
-        rawOutput,
-        parsedLine,
-        sanLine: parsed.sanLine ?? null,
-        parseStatus: parsed.parseStatus,
-        formatValid: parsed.formatValid,
-        correctStrict,
-        thinkingText: parsed.thinkingText ?? apiReasoning ?? null,
-        latencyMs,
-        usage,
-        responseError: null,
-        ...(STORE_RAW_RESPONSE ? { providerResponse: response } : {}),
-      };
-      console.log(
-        `[${index + 1}/${total}] ${puzzle.puzzleId} ${puzzle.track} ${puzzle.ratingBucket} -> ${correctStrict ? "OK" : "MISS"}`
-      );
-      return result;
-    } catch (error) {
-      const latencyMs = Date.now() - started;
-      const message = error instanceof Error ? error.message : String(error);
-      const result = {
-        index,
-        puzzleId: puzzle.puzzleId,
-        track: puzzle.track,
-        ratingBucket: puzzle.ratingBucket,
-        sourceFen: promptContext.sourceFen,
-        initialMove: puzzle.initialMove,
-        currentFen: promptContext.currentFen,
-        sideToMove: promptContext.sideToMove,
-        expectedLine,
-        rawOutput: "",
-        parsedLine: null,
-        parseStatus: "request_error",
-        formatValid: false,
-        correctStrict: false,
-        thinkingText: null,
-        latencyMs,
-        usage: {
-          promptTokens: 0,
-          completionTokens: 0,
-          reasoningTokens: 0,
-          totalTokens: 0,
-          cost: 0,
-        },
-        responseError: { message },
-      };
-      console.error(`[${index + 1}/${total}] ${puzzle.puzzleId} failed: ${message}`);
-      return result;
-    }
-  };
-}
-
-async function runPool(tasks, concurrency, onTaskCompleted = null) {
-  const results = new Array(tasks.length);
+async function runPool(tasks, concurrency, onTaskCompleted) {
   let nextIndex = 0;
-
   async function worker() {
     while (nextIndex < tasks.length) {
       const i = nextIndex;
       nextIndex += 1;
-      results[i] = await tasks[i]();
-      if (onTaskCompleted) {
-        await onTaskCompleted(results[i], i);
-      }
+      const result = await tasks[i]();
+      await onTaskCompleted(result);
     }
   }
-
-  const workers = Array.from({ length: Math.min(concurrency, tasks.length) }, () => worker());
-  await Promise.all(workers);
-  return results;
+  await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, () => worker()));
 }
 
 async function main() {
   assert(apiKey, `Missing ${apiProvider.apiKeyEnv}.`);
   assert(modelId, "Missing BENCH_MODEL_ID.");
   assert(apiModelId, "Missing API model id.");
-  assert(Number.isFinite(MAX_TOKENS) && MAX_TOKENS > 0, "MAX_TOKENS must be > 0.");
   apiClient = new OpenAI({
     apiKey,
     baseURL: apiBaseURL,
     maxRetries: 0,
-    timeout: benchConfig.requestTimeoutMs ?? 120000,
+    timeout: benchConfig.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
   });
-  const modelDisplayName = displayModelName(modelId);
 
-  modelSupportedParams = await loadSupportedParameters(apiModelId);
+  modelInfo = await loadModelInfo(apiModelId);
+  useReasoning = modelInfo.supportedParams.has("reasoning");
+  maxTokens = benchConfig.maxTokens ?? (useReasoning ? DEFAULT_MAX_TOKENS_REASONING : DEFAULT_MAX_TOKENS);
+  assert(Number.isInteger(maxTokens) && maxTokens > 0, "maxTokens must be a positive integer.");
+  if (modelInfo.maxCompletionTokens) {
+    assert(
+      maxTokens <= modelInfo.maxCompletionTokens,
+      `maxTokens=${maxTokens} exceeds ${apiModelId}'s max completion tokens (${modelInfo.maxCompletionTokens}). Lower maxTokens in config.ts (keep it the same for runs you compare).`
+    );
+  }
+  if (useReasoning && modelInfo.supportedEfforts) {
+    // OpenRouter maps unsupported efforts down (e.g. xhigh -> high for Gemini), which
+    // would publish a "xhigh" result that really ran at "high".
+    assert(
+      modelInfo.supportedEfforts.includes(reasoningEffort),
+      `Reasoning effort "${reasoningEffort}" is not supported by ${apiModelId} (supported: ${modelInfo.supportedEfforts.join(", ")}).`
+    );
+  }
+  if (benchConfig.temperature !== undefined) {
+    assert(
+      modelInfo.supportedParams.has("temperature"),
+      `${apiModelId} does not support temperature; remove it from config.ts.`
+    );
+    temperature = benchConfig.temperature;
+  }
+  const revealTheme = benchConfig.revealTheme ?? true;
 
-  const useTemp = modelSupportedParams.has("temperature");
-  const temperature = useTemp ? (benchConfig.temperature ?? 0) : null;
-  useReasoning = modelSupportedParams.has("reasoning");
+  console.log(`Reasoning: ${useReasoning ? `effort="${reasoningEffort}"` : "not supported by model"}, max_tokens=${maxTokens}`);
+  console.log(`Temperature: ${temperature === null ? "provider default" : temperature}; puzzle theme ${revealTheme ? "shown" : "hidden"}`);
 
-  console.log(`Temperature: ${useTemp ? `${temperature} (supported)` : "not set (unsupported)"}`);
-  console.log(`Reasoning: ${useReasoning ? `effort="${reasoningEffort}", max_tokens=${MAX_TOKENS_REASONING}` : "not supported by model"}`);
-
-  const datasetRaw = await readFile(DATASET_PATH, "utf8");
-  const dataset = JSON.parse(datasetRaw);
+  const dataset = JSON.parse(await readFile(DATASET_PATH, "utf8"));
   const datasetId = dataset.datasetId ?? "unknown";
-  const puzzlesAll = Array.isArray(dataset?.puzzles) ? dataset.puzzles : [];
-  assert(puzzlesAll.length > 0, `Dataset has no puzzles: ${DATASET_PATH}`);
-  const puzzles = puzzlesAll;
+  const puzzles = Array.isArray(dataset?.puzzles) ? dataset.puzzles : [];
+  assert(puzzles.length > 0, `Dataset has no puzzles: ${DATASET_PATH}`);
+
+  const git = gitInfo();
+  if (git.harnessFilesDirty) {
+    console.warn("Warning: harness or dataset files have uncommitted changes; this run records harnessFilesDirty=true.");
+  }
+
+  const runConfig = {
+    harnessVersion: HARNESS_VERSION,
+    harnessHash: await harnessHash(),
+    gitCommit: git.commit,
+    harnessFilesDirty: git.harnessFilesDirty,
+    protocol: "lichess-move-by-move",
+    revealTheme,
+    temperature,
+    maxTokens,
+    reasoning: useReasoning ? { effort: reasoningEffort } : null,
+    retries: RETRIES,
+    concurrency: CONCURRENCY,
+    requestTimeoutMs: benchConfig.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+    datasetPath: path.relative(process.cwd(), DATASET_PATH),
+    apiProvider: apiProvider.id,
+    apiModelId,
+    providerOrder: benchConfig.providerOrder ?? null,
+    variantId: variantId || null,
+    model: {
+      canonicalSlug: modelInfo.canonicalSlug ?? null,
+      supportedEfforts: modelInfo.supportedEfforts ?? null,
+      defaultEffort: modelInfo.defaultEffort ?? null,
+      maxCompletionTokens: modelInfo.maxCompletionTokens ?? null,
+    },
+  };
 
   const modelResultsDir = path.join(RESULTS_DIR, sanitizeModelId(modelId));
   await mkdir(modelResultsDir, { recursive: true });
   const checkpointFile = inProgressPath(modelResultsDir, datasetId);
   const checkpoint = await readInProgressCheckpoint(checkpointFile, { modelId, datasetId });
 
+  // Never merge attempts produced under different settings or harness code into one run.
+  if (checkpoint?.config) {
+    const keys = ["harnessHash", "maxTokens", "apiModelId", "apiProvider", "revealTheme", "temperature"];
+    const mismatched = keys.filter((key) => checkpoint.config[key] !== runConfig[key]);
+    if ((checkpoint.config.reasoning?.effort ?? null) !== (runConfig.reasoning?.effort ?? null)) {
+      mismatched.push("reasoning.effort");
+    }
+    if (JSON.stringify(checkpoint.config.providerOrder ?? null) !== JSON.stringify(runConfig.providerOrder)) {
+      mismatched.push("providerOrder");
+    }
+    assert(
+      mismatched.length === 0,
+      `Checkpoint ${path.relative(process.cwd(), checkpointFile)} was created with different settings or harness code (${mismatched.join(", ")}). Delete it to start fresh, or restore the old settings to resume.`
+    );
+  }
+
   const knownPuzzleIds = new Set(puzzles.map((p) => p.puzzleId));
+  // Attempts that failed with a request error are dropped so resuming retries them.
   const resumedAttempts = dedupeAttemptsByPuzzle(
-    (checkpoint?.attempts ?? []).filter((attempt) => knownPuzzleIds.has(attempt?.puzzleId))
+    (checkpoint?.attempts ?? []).filter(
+      (attempt) => knownPuzzleIds.has(attempt?.puzzleId) && attempt?.parseStatus !== "request_error"
+    )
   );
   const completedPuzzleIds = new Set(resumedAttempts.map((attempt) => attempt.puzzleId));
-  const remaining = [];
-  for (let i = 0; i < puzzles.length; i += 1) {
-    const puzzle = puzzles[i];
-    if (completedPuzzleIds.has(puzzle.puzzleId)) continue;
-    remaining.push({ puzzle, index: i });
-  }
+  const remaining = puzzles
+    .map((puzzle, index) => ({ puzzle, index }))
+    .filter(({ puzzle }) => !completedPuzzleIds.has(puzzle.puzzleId));
 
   const runStart = Date.now();
   const runId =
     checkpoint?.runId ??
-    `${new Date().toISOString().replace(/[:.]/g, "-")}-${hashShort(
-      `${modelId}|${datasetId}|${runStart}`
-    )}`;
+    `${new Date().toISOString().replace(/[:.]/g, "-")}-${hashShort(`${modelId}|${datasetId}|${runStart}`)}`;
   const runCreatedAt = checkpoint?.createdAt ?? new Date().toISOString();
-  const provider = apiProvider.id;
+  const header = {
+    schema: "benchmark-run",
+    runId,
+    datasetId,
+    modelId,
+    modelName: modelName || modelId,
+    benchmarkLabel: null,
+    provider: apiProvider.id,
+    promptFile: "src/bench/prompt.ts",
+    config: runConfig,
+  };
 
   if (resumedAttempts.length > 0) {
-    console.log(
-      `Resuming checkpoint: ${resumedAttempts.length}/${puzzles.length} already complete; ${remaining.length} remaining.`
-    );
+    console.log(`Resuming checkpoint: ${resumedAttempts.length}/${puzzles.length} already complete; ${remaining.length} remaining.`);
   }
-  console.log(`Running ${puzzles.length} puzzle(s) with model=${modelDisplayName} concurrency=${CONCURRENCY}`);
+  console.log(`Running ${puzzles.length} puzzle(s) with model=${header.modelName} concurrency=${CONCURRENCY}`);
 
   const attemptsByPuzzleId = new Map(resumedAttempts.map((attempt) => [attempt.puzzleId, attempt]));
   let checkpointWriteChain = Promise.resolve();
   const writeCheckpoint = () => {
     const attempts = sortAttemptsByIndex(Array.from(attemptsByPuzzleId.values()));
     const payload = {
-      schema: "benchmark-run",
+      ...header,
       status: "in_progress",
-      runId,
       createdAt: runCreatedAt,
-      datasetId,
-      modelId,
-      modelName: modelDisplayName,
-      provider,
-      promptFile: path.relative(process.cwd(), path.resolve(process.cwd(), "src/bench/prompt.ts")),
-      config: {
-        temperature,
-        maxTokens: useReasoning ? MAX_TOKENS_REASONING : MAX_TOKENS,
-        reasoning: useReasoning ? { effort: reasoningEffort } : null,
-        retries: RETRIES,
-        concurrency: CONCURRENCY,
-        limit: null,
-        datasetPath: path.relative(process.cwd(), DATASET_PATH),
-        apiProvider: apiProvider.id,
-        apiModelId,
-        variantId: variantId || null,
-      },
-      progress: {
-        completed: attempts.length,
-        total: puzzles.length,
-      },
+      progress: { completed: attempts.length, total: puzzles.length },
       summary: summarizeAttempts(attempts),
       attempts,
     };
     checkpointWriteChain = checkpointWriteChain
       .then(() => writeFile(checkpointFile, `${JSON.stringify(payload, null, 2)}\n`, "utf8"))
       .catch((error) => {
-        console.warn(
-          `Warning: unable to write checkpoint (${error instanceof Error ? error.message : String(error)}).`
-        );
+        console.warn(`Warning: unable to write checkpoint (${error instanceof Error ? error.message : String(error)}).`);
       });
   };
 
-  if (resumedAttempts.length > 0) {
-    writeCheckpoint();
-  }
-  const tasks = remaining.map(({ puzzle, index }) => solvePuzzle(puzzle, index, puzzles.length));
+  if (resumedAttempts.length > 0) writeCheckpoint();
+  const tasks = remaining.map(({ puzzle, index }) => solvePuzzle(puzzle, index, puzzles.length, revealTheme));
   await runPool(tasks, CONCURRENCY, async (attempt) => {
     attemptsByPuzzleId.set(attempt.puzzleId, attempt);
     writeCheckpoint();
@@ -1092,63 +845,64 @@ async function main() {
 
   const mergedAttempts = sortAttemptsByIndex(Array.from(attemptsByPuzzleId.values()));
   const summary = summarizeAttempts(mergedAttempts);
+
+  // A request error is an infrastructure failure, not a wrong answer. Keep the
+  // checkpoint so the next `bench:run` retries just those puzzles, unless told to
+  // publish the run with the errors scored as misses.
+  const finalizeWithErrors =
+    benchConfig.finalizeWithErrors === true || envTrimmed("BENCH_FINALIZE_WITH_ERRORS") === "1";
+  if (summary.requestErrors > 0 && !finalizeWithErrors) {
+    console.log("");
+    console.warn(
+      `${summary.requestErrors}/${summary.total} puzzle(s) failed with request errors. Results kept in ${path.relative(process.cwd(), checkpointFile)}.`
+    );
+    console.warn(
+      "Run bench:run again to retry only those puzzles, or set BENCH_FINALIZE_WITH_ERRORS=1 (or finalizeWithErrors in config.ts) to save the run as-is."
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const servedBy = {};
+  for (const attempt of mergedAttempts) {
+    for (const turn of attempt.turns ?? []) {
+      const key = `${turn.servedProvider ?? "unknown"} / ${turn.servedModel ?? "unknown"}`;
+      servedBy[key] = (servedBy[key] ?? 0) + 1;
+    }
+  }
+
   const result = {
-    schema: "benchmark-run",
-    runId,
+    ...header,
     createdAt: new Date().toISOString(),
-    datasetId,
-    modelId,
-    modelName: modelDisplayName,
-    benchmarkLabel: null,
-    provider,
-    promptFile: path.relative(process.cwd(), path.resolve(process.cwd(), "src/bench/prompt.ts")),
-    config: {
-      temperature,
-      maxTokens: useReasoning ? MAX_TOKENS_REASONING : MAX_TOKENS,
-      reasoning: useReasoning ? { effort: reasoningEffort } : null,
-      retries: RETRIES,
-      concurrency: CONCURRENCY,
-      limit: null,
-      datasetPath: path.relative(process.cwd(), DATASET_PATH),
-      apiProvider: apiProvider.id,
-      apiModelId,
-      variantId: variantId || null,
-    },
+    startedAt: runCreatedAt,
+    servedBy,
     summary,
     attempts: mergedAttempts,
   };
-
-  const outputFile = path.join(
-    modelResultsDir,
-    `${runId}.benchmark.json`
-  );
+  const outputFile = path.join(modelResultsDir, `${runId}.benchmark.json`);
   await writeFile(outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
   await unlink(checkpointFile).catch(() => {});
 
+  const pct = (x) => `${(x * 100).toFixed(2)}%`;
   console.log("");
   console.log(`Saved run: ${path.relative(process.cwd(), outputFile)}`);
+  console.log(`Solved: ${pct(summary.accuracyStrict)} (${summary.correctStrict}/${summary.total}); first move correct: ${pct(summary.firstMoveAccuracy)}`);
   console.log(
-    `Accuracy(strict): ${(summary.accuracyStrict * 100).toFixed(2)}% (${summary.correctStrict}/${summary.total})`
+    `Unparsed: ${summary.total - summary.parsed} (truncated at max_tokens: ${summary.truncated}); illegal moves: ${summary.illegalMoves}; checkmate alternatives: ${summary.checkmateAlternatives}`
   );
+  console.log(`Served by: ${Object.entries(servedBy).map(([k, v]) => `${k} (${v} turns)`).join(", ")}`);
   console.log(
-    `Accuracy(parsed): ${(summary.accuracyParsed * 100).toFixed(2)}% (${summary.correctStrict}/${summary.parsed} parsed)`
+    `Turns: ${summary.totalTurns}; tokens prompt/completion/reasoning: ${summary.totalPromptTokens}/${summary.totalCompletionTokens}/${summary.totalReasoningTokens}; cost: ${summary.totalCost.toFixed(6)}`
   );
-  console.log(
-    `Parse rate: ${((summary.parsed / summary.total) * 100).toFixed(1)}% — SAN converted: ${summary.sanConverted}, unparsed: ${summary.total - summary.parsed}`
-  );
-  console.log(
-    `Tokens prompt/completion/reasoning: ${summary.totalPromptTokens}/${summary.totalCompletionTokens}/${summary.totalReasoningTokens}`
-  );
-  console.log(`Total cost: ${summary.totalCost.toFixed(6)}`);
+  if (summary.truncated > 0) {
+    console.warn(`Warning: ${summary.truncated} answer(s) hit max_tokens=${maxTokens} before replying. Consider raising maxTokens.`);
+  }
 }
 
 async function bootstrap() {
   loadBenchEnv();
   apiProvider = resolveApiProvider(benchConfig.apiProvider || envTrimmed("BENCH_API_PROVIDER"));
-  apiBaseURL =
-    benchConfig.apiBaseUrl ||
-    envTrimmed("BENCH_API_BASE_URL") ||
-    apiProvider.baseURL;
+  apiBaseURL = benchConfig.apiBaseUrl || envTrimmed("BENCH_API_BASE_URL") || apiProvider.baseURL;
   apiKey = envString(apiProvider.apiKeyEnv);
   // config.ts takes priority; env vars are a fallback for CI / scripting
   baseModelId = benchConfig.modelId || envString("BENCH_MODEL_ID");
@@ -1157,17 +911,12 @@ async function bootstrap() {
   apiModelId = benchConfig.apiModelId || envTrimmed("BENCH_API_MODEL_ID") || baseModelId;
   modelName = benchConfig.modelName || envTrimmed("BENCH_MODEL_NAME");
   reasoningEffort =
-    benchConfig.reasoningEffort ||
-    envTrimmed("BENCH_REASONING_EFFORT") ||
-    apiProvider.defaultReasoningEffort;
+    benchConfig.reasoningEffort || envTrimmed("BENCH_REASONING_EFFORT") || apiProvider.defaultReasoningEffort;
+  console.log(`Harness v${HARNESS_VERSION} (Lichess move-by-move)`);
   console.log(`Provider: ${apiProvider.label} (${apiBaseURL})`);
   console.log(`Model: ${modelId} (${modelName})`);
-  if (variantId) {
-    console.log(`Variant: ${variantId} (base model ${baseModelId})`);
-  }
-  if (apiModelId !== baseModelId) {
-    console.log(`API model: ${apiModelId}`);
-  }
+  if (variantId) console.log(`Variant: ${variantId} (base model ${baseModelId})`);
+  if (apiModelId !== baseModelId) console.log(`API model: ${apiModelId}`);
   await main();
 }
 

@@ -1,47 +1,63 @@
-export const SYSTEM_PROMPT = `You are solving a chess tactics benchmark.
+/**
+ * v2 prompts. The model plays one move per turn, like a human on Lichess: after each
+ * correct move the harness plays the opponent's reply from the stored solution and
+ * shows the new position. Nothing that could identify the puzzle (Lichess id, rating)
+ * is included, so the model can't recall a memorized solution.
+ */
 
-Rules:
-1. Use the current position shown below.
-2. Output ONLY the final UCI move line — nothing else.
-3. Output exactly the required number of plies.
-4. Use lowercase UCI notation: each move is the source square followed by the destination square (e.g. e2e4, g1f3, e7e8q for promotion).
-5. Do NOT use algebraic notation (Nf3, Qxe5, O-O, Rxd1+, etc.). Only source-destination pairs.
-6. Separate moves with a single space. No commas, no move numbers, no check/mate symbols.
-7. Do not wrap output in code blocks, markdown, or any formatting.
-8. You may think privately, but your final response must contain a move line.
-9. Never return an empty final response.`;
+export const SYSTEM_PROMPT = `You are solving chess puzzles taken from real games. In each puzzle one side has a winning tactic, and you play that side. You answer with one move at a time. After each correct move you are shown the opponent's reply and the new position, and you play your next move, until the puzzle is complete.
 
-export function buildUserPrompt(input: {
-  puzzleId: string;
-  trackLabel: string;
-  ratingBucket: string;
-  rating: number | null | undefined;
-  currentFen: string;
+Answer format:
+- Reply with exactly one move in lowercase UCI notation: the source square followed by the destination square, for example e2e4 or g1f3.
+- Castling is written as the king's move: e1g1, e1c1, e8g8 or e8c8.
+- Promotions add the piece letter: e7e8q, a2a1n.
+- Do not use SAN or algebraic notation (Nf3, Qxe5, O-O). No move numbers, check symbols, punctuation, markdown or explanation.
+- You may think before answering, but your final response must be only the move.`;
+
+export type PositionView = {
+  fen: string;
   sideToMove: string;
   boardAscii: string;
+};
+
+function describePosition(view: PositionView) {
+  return `Position (FEN):
+${view.fen}
+
+Board (White's side at the bottom; uppercase = White, lowercase = Black):
+${view.boardAscii}
+
+${view.sideToMove} to move.`;
+}
+
+export function buildFirstTurnPrompt(input: {
+  trackLabel: string | null;
   taskDescription: string;
-  requiredPlies: number;
+  playerSide: string;
+  lastMoveUci: string;
+  lastMoveSan: string | null;
+  position: PositionView;
 }) {
-  return `Puzzle ID: ${input.puzzleId}
-Puzzle type: ${input.trackLabel}
-Rating bucket: ${input.ratingBucket}
-Rating: ${input.rating ?? 'unknown'}
+  const typeLine = input.trackLabel ? `Puzzle type: ${input.trackLabel}\n` : "";
+  const lastMove = input.lastMoveSan ? `${input.lastMoveUci} (${input.lastMoveSan})` : input.lastMoveUci;
+  return `${typeLine}You play ${input.playerSide}. ${input.taskDescription}
 
-Current FEN:
-${input.currentFen}
+Opponent's last move: ${lastMove}
 
-Side to move:
-${input.sideToMove}
+${describePosition(input.position)}
 
-Board:
-${input.boardAscii}
+Reply with your move in UCI.`;
+}
 
-Task:
-${input.taskDescription}
+export function buildFollowUpPrompt(input: {
+  replyUci: string;
+  replySan: string | null;
+  position: PositionView;
+}) {
+  const reply = input.replySan ? `${input.replyUci} (${input.replySan})` : input.replyUci;
+  return `Correct. The opponent replied ${reply}.
 
-Output format:
-exactly ${input.requiredPlies} lowercase UCI move(s) separated by one space.
-Example of UCI notation: e2e4 g8f6 d2d4 (source square + destination square, add q/r/b/n for promotion).
-Do NOT use algebraic/SAN notation like Nf6, Qxe5, O-O, etc.
-Do not leave the final response empty.`;
+${describePosition(input.position)}
+
+Reply with your next move in UCI.`;
 }

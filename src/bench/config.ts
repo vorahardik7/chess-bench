@@ -17,10 +17,33 @@ export type BenchmarkConfig = {
   apiProvider?: "openrouter" | "sakana";
   apiBaseUrl?: string;
   reasoningEffort?: string;
-  /** Sampling temperature; defaults to 0 when supported by the model. */
+  /**
+   * Sampling temperature. Leave unset (provider default) for published runs: OpenAI and
+   * Anthropic reasoning models don't accept it, and Google documents it as ignored for
+   * current Gemini models, so setting it would only affect some vendors.
+   */
   temperature?: number;
+  /**
+   * Show the puzzle theme ("Mate in 2", "Fork", ...) and a theme-specific task in the
+   * prompt. Default true. false = Lichess rated-puzzle conditions ("Find the best move.").
+   */
+  revealTheme?: boolean;
   supportedParams?: string[];
+  /**
+   * max_tokens for every request/turn (reasoning + answer). Defaults to 32768 for reasoning
+   * models and 4096 otherwise. Keep it the same across runs you compare: on OpenRouter,
+   * Anthropic's thinking budget is a share of this value (medium 50%, high 80%,
+   * xhigh/max 95%), so changing it changes how much those models think.
+   */
+  maxTokens?: number;
+  /** Per-request (per-turn) timeout. Defaults to 600000 (10 min); xhigh/max reasoning can be slow. */
   requestTimeoutMs?: number;
+  /**
+   * By default a run with request errors is not saved as final; the checkpoint is kept so
+   * the next `bench:run` retries only the failed puzzles. Set true to save it anyway
+   * (errors scored as misses). Env: BENCH_FINALIZE_WITH_ERRORS=1.
+   */
+  finalizeWithErrors?: boolean;
   /**
    * Forces OpenRouter to route through a specific provider (uses your BYOK key for that provider).
    * Required if you have BYOK set up and want to avoid OpenRouter shared credits.
@@ -40,11 +63,12 @@ export type BenchmarkConfig = {
 
 const config: BenchmarkConfig = {
   apiProvider: "openrouter",
-  modelId: "anthropic/claude-fable-5.2",
-  variantId: "xhigh",
-  modelName: "Claude Fable 5.2 [xhigh]",
-  reasoningEffort: "xhigh",
-  providerOrder: ["anthropic"],
+  modelId: "openai/gpt-6.1-sol",
+  variantId: "low",
+  modelName: "GPT-6.1 Sol [low]",
+  reasoningEffort: "low",
+  requestTimeoutMs: 300000,
+  providerOrder: ["openai/flex"],
 };
 
 export default config;
