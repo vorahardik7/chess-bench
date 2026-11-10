@@ -40,11 +40,12 @@ export type BenchmarkConfig = {
 
 const config: BenchmarkConfig = {
   apiProvider: "openrouter",
-  modelId: "anthropic/claude-fable-5.2",
-  variantId: "xhigh",
-  modelName: "Claude Fable 5.2 [xhigh]",
-  reasoningEffort: "xhigh",
-  providerOrder: ["anthropic"],
+  modelId: "google/gemini-4-carbon",
+  variantId: "medium",
+  modelName: "Gemini 4 Carbon [medium]",
+  reasoningEffort: "medium",
+  requestTimeoutMs: 300000,
+  providerOrder: ["google-vertex/global"],
 };
 
 export default config;
