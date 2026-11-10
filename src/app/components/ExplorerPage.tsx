@@ -1,5 +1,4 @@
 import BenchmarkExplorer from './BenchmarkExplorer';
-import SiteHeader from './SiteHeader';
 import StructuredData from './StructuredData';
 import { getLatestResults } from '../lib/results';
 import {
@@ -18,11 +17,6 @@ export default async function ExplorerPage() {
       index === 0 ? model : { ...model, attemptsByPuzzleId: {} }
     ),
   };
-  const stats = [
-    { value: results.models.length, label: 'models' },
-    { value: results.puzzles.length, label: 'Lichess puzzles' },
-    { value: new Set(results.puzzles.map((puzzle) => puzzle.level)).size, label: 'puzzle types' },
-  ];
 
   const structuredData = [
     {
@@ -45,16 +39,10 @@ export default async function ExplorerPage() {
   ];
 
   return (
-    <main
-      className="min-h-screen flex flex-col font-sans"
-      style={{ background: 'var(--background)', color: 'var(--text-primary)' }}
-    >
+    <>
       <StructuredData data={structuredData} />
-
-      <div className="flex-1 flex flex-col w-full max-w-[1500px] mx-auto px-3 sm:px-5 lg:px-8 xl:px-10 pt-4 sm:pt-5 pb-6 sm:pb-8">
-        <SiteHeader stats={stats} />
-        <BenchmarkExplorer results={clientResults} />
-      </div>
-    </main>
+      <h1 className="sr-only">ChessBench: how language models do on Lichess chess puzzles</h1>
+      <BenchmarkExplorer results={clientResults} />
+    </>
   );
 }

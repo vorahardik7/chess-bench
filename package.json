@@ -11,26 +11,26 @@
     "bench:run": "node --import tsx src/bench/run-benchmark.ts"
   },
   "dependencies": {
-    "@lichess-org/chessground": "^10.4.2",
+    "@lichess-org/chessground": "^10.5.0",
     "@vercel/analytics": "^2.0.1",
     "chess.js": "^1.4.0",
-    "lucide-react": "^1.52.0",
-    "motion": "^13.5.1",
-    "next": "16.3.6",
-    "openai": "^7.28.0",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
+    "lucide-react": "^1.70.0",
+    "motion": "^14.11.1",
+    "next": "16.4.5",
+    "openai": "^7.54.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "recharts": "^3.10.1"
   },
   "devDependencies": {
-    "@next/env": "^16.3.8",
-    "@tailwindcss/postcss": "^4.3.3",
-    "@types/node": "^24.19.1",
+    "@next/env": "^16.4.5",
+    "@tailwindcss/postcss": "^4.3.5",
+    "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "eslint": "^9.39.5",
-    "eslint-config-next": "16.3.6",
-    "tailwindcss": "^4.3.3",
+    "eslint-config-next": "16.4.5",
+    "tailwindcss": "^4.3.5",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   }

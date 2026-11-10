@@ -18,6 +18,10 @@ interface ChessBoardProps {
 
 const INTRO_MOVE_HOLD_MS = 250;
 
+function prefersReducedMotion() {
+  return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 // Chessground writes these as SVG stroke attributes, so they must be literal colors.
 export const ARROW_COLORS = {
   expected: '#1f9e4f',
@@ -69,7 +73,7 @@ export default function ChessBoard({
       fen: p.fen,
       orientation: p.orientation,
       viewOnly: p.viewOnly,
-      animation: { enabled: true, duration: 300 },
+      animation: { enabled: !prefersReducedMotion(), duration: 300 },
       drawable: { shapes: p.shapes, autoShapes: [] },
       lastMove: p.lastMove,
     });
@@ -97,7 +101,8 @@ export default function ChessBoard({
       fen: initial.fen,
       orientation: initial.orientation,
       viewOnly: initial.viewOnly,
-      coordinates: false, // Cleaner look for a benchmark
+      coordinates: true,
+      ranksPosition: 'left',
       drawable: {
         shapes: initial.shapes,
         autoShapes: [],
@@ -105,7 +110,7 @@ export default function ChessBoard({
       },
       lastMove: initial.lastMove,
       animation: {
-        enabled: true,
+        enabled: !prefersReducedMotion(),
         duration: 300,
       },
       // Disable interaction for benchmark viewer
@@ -157,7 +162,9 @@ export default function ChessBoard({
     // We update lastReplayKeyRef so the initial playback doesn't trigger again on the first update if props haven't changed
     lastReplayKeyRef.current = replayKey ?? null;
 
-    if (startFen && startFen !== fen) {
+    if (startFen && startFen !== fen && prefersReducedMotion()) {
+      applyFinalState();
+    } else if (startFen && startFen !== fen) {
       // Trigger initial playback
       replayFrameRef.current = window.requestAnimationFrame(() => {
         replayTimeoutRef.current = window.setTimeout(() => {
@@ -190,6 +197,12 @@ export default function ChessBoard({
 
     // Only skip application if we are scheduling a replay right now, 
     // OR if replayFen is truthy.
+    if (replayFen && prefersReducedMotion()) {
+      clearReplayTimers();
+      applyFinalState();
+      return;
+    }
+
     if (replayFen) {
       clearReplayTimers();
       

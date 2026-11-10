@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback, useId } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   ChevronDown,
@@ -9,43 +9,78 @@ import {
   ChevronRight,
   ExternalLink,
   Info,
+  RotateCw,
   Search,
   X,
 } from 'lucide-react';
+import Image from 'next/image';
 import ChessBoard, { ARROW_COLORS } from './ChessBoard';
 import type { DrawShape } from '@lichess-org/chessground/draw';
 import type { Key } from '@lichess-org/chessground/types';
 import type { ExplorerResults, ModelView, PuzzleAttemptView } from '../lib/results.types';
-import { getDisplayFen } from './utils';
+import { getDisplayFen, getModelLogoClass, getModelLogoPath } from './utils';
+import { parseStatusLabel } from '../lib/parse-status';
 
-function InfoTip({ text }: { text: string }) {
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  const iconRef = useRef<SVGSVGElement>(null);
+function InfoTip({ text, label = 'More info' }: { text: string; label?: string }) {
+  const [pos, setPos] = useState<{ top: number; left: number; above: boolean } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const tipId = useId();
 
   const show = () => {
-    const el = iconRef.current;
+    const el = buttonRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
+    const width = 224;
+    // Flip above the trigger when there isn't room below.
+    const above = rect.bottom + 72 > window.innerHeight;
     setPos({
-      top: rect.bottom + 6,
-      left: Math.max(8, Math.min(rect.left + rect.width / 2 - 104, window.innerWidth - 216)),
+      above,
+      top: above ? rect.top - 8 : rect.bottom + 8,
+      left: Math.max(8, Math.min(rect.left + rect.width / 2 - width / 2, window.innerWidth - width - 8)),
     });
   };
-
   const hide = () => setPos(null);
 
+  useEffect(() => {
+    if (!pos) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') hide();
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', hide, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', hide, true);
+    };
+  }, [pos]);
+
   return (
-    <span className="inline-flex items-center" onMouseEnter={show} onMouseLeave={hide}>
-      <Info ref={iconRef} className="w-3 h-3 cursor-help" style={{ color: 'var(--text-tertiary)' }} />
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-label={label}
+        aria-describedby={pos ? tipId : undefined}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+        onClick={() => (pos ? hide() : show())}
+        className="inline-flex h-4 w-4 items-center justify-center rounded-full opacity-70 transition-opacity hover:opacity-100 focus-visible:opacity-100"
+      >
+        <Info className="h-3 w-3" />
+      </button>
       {pos && (
         <span
-          className="fixed w-52 px-2.5 py-1.5 rounded-md text-[11px] leading-snug font-normal normal-case tracking-normal z-[9999] pointer-events-none"
+          id={tipId}
+          role="tooltip"
+          className={`fixed z-[9999] w-56 rounded-md px-3 py-2 text-[12px] leading-[18px] font-normal normal-case tracking-normal pointer-events-none ${pos.above ? '-translate-y-full' : ''}`}
           style={{ boxShadow: 'var(--shadow-pop)', background: 'var(--surface-raised)', border: '1px solid var(--border)', color: 'var(--text-primary)', top: pos.top, left: pos.left }}
         >
           {text}
         </span>
       )}
-    </span>
+    </>
   );
 }
 
@@ -257,13 +292,13 @@ function formatTrackLabel(level: string): string {
   if (level in TRACK_DESCRIPTIONS) {
     if (level === 'hangingPiece') return 'Hanging Piece';
     return level === 'mate1' || level === 'mateIn1'
-      ? 'Mate 1'
+      ? 'Mate in 1'
       : level === 'mate2' || level === 'mateIn2'
-      ? 'Mate 2'
+      ? 'Mate in 2'
       : level.charAt(0).toUpperCase() + level.slice(1);
   }
   const mateMatch = /^(?:mateIn|mate)(\d+)$/i.exec(level);
-  if (mateMatch) return `Mate ${mateMatch[1]}`;
+  if (mateMatch) return `Mate in ${mateMatch[1]}`;
   return level
     .replace(/([a-z])([A-Z])/g, '$1 $2')
     .replace(/[-_]/g, ' ')
@@ -284,6 +319,74 @@ function getPuzzleDescription(level: string, fen: string, requiredPlies: number)
     return `${side} to move and find checkmate in ${mateMatch[1]} move${mateMatch[1] === '1' ? '' : 's'}.`;
   }
   return `${side} to move and find the best ${requiredPlies}-ply line (${formatTrackLabel(level)}).`;
+}
+
+function formatLatency(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return '—';
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)}s`;
+}
+
+/**
+ * A move line as tokens that never break mid-move. Opponent replies (odd plies) are
+ * dimmed. With `compareTo`, everything from the first ply that differs from the
+ * solution is marked, so a wrong answer shows where it went off.
+ */
+function MoveLine({
+  san,
+  uci,
+  compareTo,
+  empty = '—',
+}: {
+  san?: string | null;
+  uci: string;
+  compareTo?: string;
+  empty?: string;
+}) {
+  const uciTokens = uci.trim() ? uci.trim().split(/\s+/) : [];
+  const sanTokens = san?.trim() ? san.trim().split(/\s+/) : [];
+  const shown = sanTokens.length === uciTokens.length && sanTokens.length > 0 ? sanTokens : uciTokens;
+  if (shown.length === 0) {
+    return <div className="font-mono text-sm" style={{ color: 'var(--text-tertiary)' }}>{empty}</div>;
+  }
+  const expected = compareTo?.trim() ? compareTo.trim().split(/\s+/) : null;
+  const firstMiss = expected
+    ? (() => {
+        const i = uciTokens.findIndex((move, idx) => move !== expected[idx]);
+        if (i >= 0) return i;
+        return uciTokens.length !== expected.length ? uciTokens.length : -1;
+      })()
+    : -1;
+
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1.5">
+        {shown.map((move, i) => {
+          const missed = firstMiss >= 0 && i >= firstMiss;
+          const first = i === firstMiss;
+          return (
+            <span
+              key={`${move}-${i}`}
+              className="rounded-md px-2 py-0.5 font-mono text-[15px] font-medium whitespace-nowrap"
+              style={{
+                color: missed ? 'var(--danger)' : i % 2 === 1 ? 'var(--text-secondary)' : 'var(--text-primary)',
+                background: first ? 'var(--danger-light)' : 'var(--surface-raised)',
+                boxShadow: `inset 0 0 0 1px ${first ? 'var(--danger-border)' : 'var(--border-subtle)'}`,
+                opacity: missed && !first ? 0.75 : 1,
+              }}
+              title={uciTokens[i]}
+            >
+              {move}
+            </span>
+          );
+        })}
+      </div>
+      {shown !== uciTokens && (
+        <div className="mt-1.5 font-mono text-[11.5px]" style={{ color: 'var(--text-tertiary)' }}>
+          {uciTokens.join(' ')}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ============================================================================
@@ -354,14 +457,70 @@ export default function PuzzlesTab({
     return idx >= 0 ? idx : 0;
   }, [filteredPuzzles, activePuzzleId]);
 
+  const listRef = useRef<HTMLDivElement>(null);
+  const [listEdges, setListEdges] = useState({ above: false, below: false, hiddenBelow: 0 });
+
+  const measureList = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const above = el.scrollTop > 4;
+    const below = el.scrollTop + el.clientHeight < el.scrollHeight - 4;
+    // Rows are a fixed height, so the remaining count is a cheap estimate from the first row.
+    const row = el.querySelector<HTMLElement>('[data-puzzle-row]');
+    const rowHeight = row ? row.offsetHeight + 2 : 0;
+    const hiddenBelow = below && rowHeight > 0
+      ? Math.max(1, Math.round((el.scrollHeight - el.scrollTop - el.clientHeight) / rowHeight))
+      : 0;
+    setListEdges((prev) =>
+      prev.above === above && prev.below === below && prev.hiddenBelow === hiddenBelow
+        ? prev
+        : { above, below, hiddenBelow }
+    );
+  }, []);
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    measureList();
+    // Watch the rows too: font loading or a new filter changes content height, not the box.
+    const observer = new ResizeObserver(measureList);
+    observer.observe(el);
+    if (el.firstElementChild) observer.observe(el.firstElementChild);
+    return () => observer.disconnect();
+  }, [measureList, filteredPuzzles]);
+
+  // A new filter starts from the top instead of mid-way down a shorter list.
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = 0;
+  }, [levelFilter]);
+
+  const scrollListBy = (direction: 1 | -1) => {
+    const el = listRef.current;
+    if (!el) return;
+    el.scrollBy({ top: direction * el.clientHeight * 0.8, behavior: 'smooth' });
+  };
+
+  const selectPuzzleAt = (index: number, focusRow = false) => {
+    const puzzle = filteredPuzzles[index];
+    if (!puzzle) return;
+    setSelectedPuzzleId(puzzle.id);
+    // Keep the highlighted row clear of the fade and pill (scroll-padding on the list).
+    // Instant, so rapid steps don't cancel each other's smooth scroll.
+    requestAnimationFrame(() => {
+      const row = listRef.current?.querySelector<HTMLElement>(`[data-puzzle-id="${CSS.escape(puzzle.id)}"]`);
+      row?.scrollIntoView({ block: 'nearest' });
+      if (focusRow) row?.focus({ preventScroll: true });
+    });
+  };
+
   const goPrev = () => {
     if (filteredPuzzles.length === 0) return;
-    setSelectedPuzzleId(filteredPuzzles[Math.max(0, selectedIndex - 1)].id);
+    selectPuzzleAt(Math.max(0, selectedIndex - 1));
   };
 
   const goNext = () => {
     if (filteredPuzzles.length === 0) return;
-    setSelectedPuzzleId(filteredPuzzles[Math.min(filteredPuzzles.length - 1, selectedIndex + 1)].id);
+    selectPuzzleAt(Math.min(filteredPuzzles.length - 1, selectedIndex + 1));
   };
 
   const activeModelId = useMemo(() => {
@@ -381,25 +540,42 @@ export default function PuzzlesTab({
     return loadedAttempts[selectedModel.id];
   }, [selectedModel, loadedAttempts]);
 
+  const [failedAttemptModels, setFailedAttemptModels] = useState<Record<string, boolean>>({});
+  const attemptsFailed = selectedModel ? failedAttemptModels[selectedModel.id] === true : false;
+
   useEffect(() => {
     if (!selectedModel) return;
     if (Object.keys(selectedModel.attemptsByPuzzleId).length > 0) return;
-    if (loadedAttempts[selectedModel.id]) return;
+    if (loadedAttempts[selectedModel.id] || failedAttemptModels[selectedModel.id]) return;
     const modelId = selectedModel.id;
     let cancelled = false;
     void fetch(`/api/model/${encodeURIComponent(modelId)}/attempts`)
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data: { attempts?: Record<string, PuzzleAttemptView> } | null) => {
-        if (cancelled || !data?.attempts) return;
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json() as Promise<{ attempts?: Record<string, PuzzleAttemptView> }>;
+      })
+      .then((data) => {
+        if (cancelled) return;
         setLoadedAttempts((current) => ({ ...current, [modelId]: data.attempts ?? {} }));
       })
       .catch(() => {
-        // The list still shows pass/fail from marks. The detail panel can be opened again.
+        // The list still shows pass/fail from marks; the panel offers a retry.
+        if (!cancelled) setFailedAttemptModels((current) => ({ ...current, [modelId]: true }));
       });
     return () => {
       cancelled = true;
     };
-  }, [selectedModel, loadedAttempts]);
+  }, [selectedModel, loadedAttempts, failedAttemptModels]);
+
+  const retryAttempts = () => {
+    if (!selectedModel) return;
+    const modelId = selectedModel.id;
+    setFailedAttemptModels((current) => {
+      const next = { ...current };
+      delete next[modelId];
+      return next;
+    });
+  };
 
   const selectedAttempt = useMemo<PuzzleAttemptView | undefined>(() => {
     if (!selectedPuzzle || !modelAttempts) return undefined;
@@ -422,6 +598,14 @@ export default function PuzzlesTab({
         ? false
         : null;
 
+  const verdict =
+    selectedCorrect === true
+      ? { label: 'Solved', color: 'var(--success)', bg: 'var(--success-light)', border: 'var(--success-border)' }
+      : selectedCorrect === false
+        ? { label: 'Missed', color: 'var(--danger)', bg: 'var(--danger-light)', border: 'var(--danger-border)' }
+        : { label: 'No result', color: 'var(--text-tertiary)', bg: 'var(--surface-raised)', border: 'var(--border)' };
+  const modelLogo = selectedModel ? getModelLogoPath(selectedModel.id) : null;
+
   const displayFen = useMemo(() => {
     if (!selectedPuzzle?.fen) return '';
     return getDisplayFen(selectedPuzzle.fen, selectedPuzzle.initialMove);
@@ -434,22 +618,24 @@ export default function PuzzlesTab({
   type AttemptDetail = { rawOutput: string; thinkingText: string | null };
   const [detailCache, setDetailCache] = useState<Record<string, AttemptDetail>>({});
   const [detailLoadingKey, setDetailLoadingKey] = useState<string | null>(null);
+  const [detailErrorKey, setDetailErrorKey] = useState<string | null>(null);
   const detailKey = selectedModel && selectedPuzzle ? `${selectedModel.id}::${selectedPuzzle.id}` : null;
   const detail = detailKey ? detailCache[detailKey] : undefined;
+  const detailFailed = detailKey !== null && detailErrorKey === detailKey;
   const loadDetail = async () => {
     if (!detailKey || !selectedModel || !selectedPuzzle) return;
     if (detailCache[detailKey] || detailLoadingKey === detailKey) return;
     setDetailLoadingKey(detailKey);
+    setDetailErrorKey(null);
     try {
       const res = await fetch(
         `/api/attempt/${encodeURIComponent(selectedModel.id)}/${encodeURIComponent(selectedPuzzle.id)}`
       );
-      if (res.ok) {
-        const data = (await res.json()) as AttemptDetail;
-        setDetailCache((c) => ({ ...c, [detailKey]: data }));
-      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as AttemptDetail;
+      setDetailCache((c) => ({ ...c, [detailKey]: data }));
     } catch {
-      // swallow — user can retry by clicking again
+      setDetailErrorKey(detailKey);
     } finally {
       setDetailLoadingKey((cur) => (cur === detailKey ? null : cur));
     }
@@ -521,12 +707,12 @@ export default function PuzzlesTab({
 
   return (
     <div
-      className="grid gap-4 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(240px,280px)_minmax(0,1fr)] xl:grid-cols-[minmax(260px,300px)_minmax(0,1fr)] lg:items-stretch"
+      className="grid gap-4 xl:h-full xl:min-h-0 lg:grid-cols-[minmax(240px,280px)_minmax(0,1fr)] xl:grid-cols-[minmax(260px,300px)_minmax(0,1fr)] lg:items-start xl:items-stretch"
     >
       {/* Sidebar */}
-      <aside className="flex min-w-0 flex-col lg:h-full lg:min-h-0">
+      <aside className="flex min-w-0 flex-col lg:sticky lg:top-4 xl:static xl:h-full xl:min-h-0">
         <div
-          className="flex flex-col rounded-xl overflow-visible lg:h-full lg:min-h-0 lg:flex-1"
+          className="flex flex-col rounded-xl overflow-visible xl:h-full xl:min-h-0 xl:flex-1"
           style={{
             background: 'var(--surface)',
             border: '1px solid var(--border)',
@@ -606,7 +792,9 @@ export default function PuzzlesTab({
                 placeholder="Filter by puzzle type..."
               />
               <div className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                  {getTrackDescription(levelFilter)}
+                  {levelFilter === 'all'
+                    ? `All ${availableLevels.length} tactics, mixed together.`
+                    : getTrackDescription(levelFilter)}
               </div>
 
               <div className="flex items-center justify-between text-xs" style={{ color: 'var(--text-tertiary)' }}>
@@ -620,59 +808,115 @@ export default function PuzzlesTab({
             </div>
           </div>
 
-          <div className="relative flex flex-col lg:flex-1 lg:min-h-0">
+          <div className="relative flex flex-col xl:flex-1 xl:min-h-0">
             <div
-              className="custom-scrollbar max-h-48 overflow-x-hidden overflow-y-auto px-2 py-2 sm:max-h-64 lg:absolute lg:inset-0 lg:max-h-none"
+              ref={listRef}
+              onScroll={measureList}
+              onKeyDown={(e) => {
+                if (e.metaKey || e.ctrlKey || e.altKey || filteredPuzzles.length === 0) return;
+                const last = filteredPuzzles.length - 1;
+                const target =
+                  e.key === 'ArrowDown' || e.key === 'j' ? Math.min(last, selectedIndex + 1)
+                  : e.key === 'ArrowUp' || e.key === 'k' ? Math.max(0, selectedIndex - 1)
+                  : e.key === 'Home' ? 0
+                  : e.key === 'End' ? last
+                  : null;
+                if (target === null) return;
+                e.preventDefault();
+                selectPuzzleAt(target, true);
+              }}
+              style={{ scrollPaddingBlock: '2.25rem 3rem' }}
+              className="custom-scrollbar max-h-56 overflow-x-hidden overflow-y-auto px-2 py-2 sm:max-h-72 lg:max-h-[calc(100dvh-26rem)] lg:min-h-64 xl:absolute xl:inset-0 xl:max-h-none xl:min-h-0"
             >
               {filteredPuzzles.length === 0 ? (
-                <div className="p-6 text-sm text-center italic" style={{ color: 'var(--text-tertiary)' }}>No puzzles match your filters.</div>
+                <div className="p-6 text-sm text-center" style={{ color: 'var(--text-tertiary)' }}>No puzzles match this filter.</div>
               ) : (
-                <div className="space-y-0.5">
+                <div className="space-y-0.5" role="group" aria-label="Puzzles. Use arrow keys to move between them.">
                   {filteredPuzzles.map((puzzle, idx) => {
                     const active = activePuzzleId === puzzle.id;
                     const markIndex = puzzleIndexById.get(puzzle.id);
                     const mark = markIndex === undefined ? undefined : selectedModel?.marks[markIndex];
-                    const dotColor = mark === '1' ? 'var(--success)' : mark === '0' ? 'var(--danger)' : 'var(--border)';
+                    const dotColor = mark === '1' ? 'var(--success)' : mark === '0' ? 'var(--danger)' : 'var(--border-strong)';
+                    const markLabel = mark === '1' ? 'solved' : mark === '0' ? 'missed' : 'no result';
                     return (
                       <button
                         key={puzzle.id}
                         type="button"
-                        onClick={() => setSelectedPuzzleId(puzzle.id)}
                         aria-current={active ? 'true' : undefined}
-                        className={`w-full text-left rounded-md px-2.5 py-2 transition-colors border ${
+                        tabIndex={active ? 0 : -1}
+                        data-puzzle-row
+                        data-puzzle-id={puzzle.id}
+                        onClick={() => setSelectedPuzzleId(puzzle.id)}
+                        aria-label={`Puzzle ${idx + 1}, ${formatTrackLabel(puzzle.level)}${puzzle.rating != null ? `, rated ${puzzle.rating}` : ''}, ${markLabel}`}
+                        className={`group relative flex w-full items-center gap-2.5 rounded-md border py-2 pr-2.5 pl-3 text-left transition-colors ${
                           active
                             ? 'bg-[var(--accent-light)] border-[var(--accent-border)]'
                             : 'border-transparent hover:bg-[var(--surface-raised)]'
                         }`}
                       >
-                        <div className="flex items-center gap-2">
-                          <div className="min-w-0 flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full shrink-0" style={{ background: dotColor }} />
-                            <span className="text-sm font-semibold tabular-nums" style={{ color: active ? 'var(--accent)' : 'var(--text-secondary)' }}>
-                              #{idx + 1}
-                            </span>
-                            <span
-                              className="text-xs font-semibold px-1.5 py-0.5 rounded truncate"
-                              style={levelBadgeStyle(puzzle.level)}
-                            >
-                              {formatTrackLabel(puzzle.level)}
-                            </span>
-                          </div>
-                        </div>
+                        <span
+                          aria-hidden="true"
+                          className="h-2 w-2 shrink-0 rounded-full"
+                          style={{ background: dotColor, boxShadow: mark === '1' || mark === '0' ? `0 0 0 3px color-mix(in srgb, ${dotColor} 16%, transparent)` : undefined }}
+                        />
+                        <span
+                          className="w-9 shrink-0 font-mono text-[13px] font-semibold tabular-nums"
+                          style={{ color: active ? 'var(--accent)' : 'var(--text-secondary)' }}
+                        >
+                          #{idx + 1}
+                        </span>
+                        <span
+                          className="truncate rounded px-1.5 py-0.5 text-[11.5px] font-semibold"
+                          style={levelBadgeStyle(puzzle.level)}
+                        >
+                          {formatTrackLabel(puzzle.level)}
+                        </span>
+                        {puzzle.rating != null && (
+                          <span
+                            className="ml-auto shrink-0 font-mono text-[11.5px] tabular-nums transition-colors group-hover:text-[var(--text-secondary)]"
+                            style={{ color: active ? 'var(--text-secondary)' : 'var(--text-tertiary)' }}
+                          >
+                            {puzzle.rating}
+                          </span>
+                        )}
                       </button>
                     );
                   })}
                 </div>
               )}
             </div>
+
+            {/* Scroll affordances: soft edges, plus a count of rows still below. */}
+            <div
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-x-0 top-0 h-6 transition-opacity duration-200 ${listEdges.above ? 'opacity-100' : 'opacity-0'}`}
+              style={{ background: 'linear-gradient(to bottom, var(--surface), transparent)' }}
+            />
+            <div
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-x-0 bottom-0 h-10 rounded-b-xl transition-opacity duration-200 ${listEdges.below ? 'opacity-100' : 'opacity-0'}`}
+              style={{ background: 'linear-gradient(to top, var(--surface) 15%, transparent)' }}
+            />
+            <button
+              type="button"
+              onClick={() => scrollListBy(1)}
+              tabIndex={-1}
+              aria-hidden="true"
+              className={`absolute right-3 bottom-2 z-10 inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--surface-raised)] py-0.5 pr-2 pl-1.5 text-[11px] font-medium text-[var(--text-secondary)] shadow-[var(--shadow-pop)] transition-all duration-200 hover:border-[var(--accent-border)] hover:text-[var(--accent)] ${
+                listEdges.below ? 'opacity-100' : 'pointer-events-none translate-y-1 opacity-0'
+              }`}
+            >
+              <ChevronDown className="h-3 w-3" />
+              <span className="tabular-nums">{listEdges.hiddenBelow} more</span>
+            </button>
           </div>
         </div>
       </aside>
 
       {/* Main panel */}
-      <section className="flex min-w-0 flex-col lg:h-full lg:min-h-0">
+      <section className="flex min-w-0 flex-col xl:h-full xl:min-h-0">
         <div
-          className="flex w-full min-w-0 flex-col overflow-hidden rounded-xl lg:min-h-0 lg:flex-1"
+          className="flex w-full min-w-0 flex-col overflow-hidden rounded-xl xl:min-h-0 xl:flex-1"
           style={{
             background: 'var(--surface)',
             border: '1px solid var(--border)',
@@ -691,19 +935,19 @@ export default function PuzzlesTab({
                       style={levelBadgeStyle(selectedPuzzle.level)}
                     >
                       {formatTrackLabel(selectedPuzzle.level)}
-                      <InfoTip text={getTrackDescription(selectedPuzzle.level)} />
+                      <InfoTip label="About this tactic" text={getTrackDescription(selectedPuzzle.level)} />
                     </span>
                   )}
                   {selectedPuzzle?.rating != null && (
                     <span className="text-xs font-semibold px-1.5 py-0.5 rounded inline-flex items-center gap-1" style={{ background: 'var(--accent-light)', color: 'var(--accent)' }}>
-                      ELO {selectedPuzzle.rating}
-                      <InfoTip text="ELO rating measures puzzle difficulty on the Lichess scale. Higher = harder." />
+                      Rating {selectedPuzzle.rating}
+                      <InfoTip label="About puzzle rating" text="Puzzle difficulty on the Lichess rating scale. Higher is harder." />
                     </span>
                   )}
                   {selectedPuzzle?.ratingBucket && (
                     <span className="text-xs px-1.5 py-0.5 rounded inline-flex items-center gap-1" style={{ background: 'var(--border-subtle)', color: 'var(--text-tertiary)' }}>
                       {selectedPuzzle.ratingBucket}
-                      <InfoTip text="Rating bucket groups puzzles by difficulty range for balanced benchmarking." />
+                      <InfoTip label="About rating bands" text="The difficulty band this puzzle was sampled from. Every band has the same number of puzzles." />
                     </span>
                   )}
                 </div>
@@ -716,7 +960,7 @@ export default function PuzzlesTab({
             </div>
           </div>
 
-          <div className="custom-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto p-3 sm:p-4 lg:overflow-hidden lg:p-4">
+          <div className="custom-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto p-3 sm:p-4 xl:overflow-hidden xl:p-4">
             {!selectedPuzzle ? (
               <div className="flex h-full items-center justify-center">
                 <div className="text-center max-w-xs px-6">
@@ -730,12 +974,12 @@ export default function PuzzlesTab({
                 </div>
               </div>
             ) : (
-              <div className="@container/stage flex min-w-0 flex-col lg:h-full lg:min-h-0">
-                <div className="grid items-start gap-4 lg:h-full lg:min-h-0 lg:items-stretch @min-[680px]/stage:grid-cols-[minmax(0,1fr)_minmax(260px,360px)] @min-[1000px]/stage:grid-cols-[minmax(0,1fr)_minmax(280px,400px)]">
+              <div className="@container/stage flex min-w-0 flex-col xl:h-full xl:min-h-0">
+                <div className="grid items-start gap-4 xl:h-full xl:min-h-0 xl:items-stretch @min-[680px]/stage:grid-cols-[minmax(0,1fr)_minmax(260px,360px)] @min-[1000px]/stage:grid-cols-[minmax(0,1fr)_minmax(280px,400px)]">
                 {/* Board column */}
                 <div className="flex min-h-0 min-w-0 flex-col">
-                  <div className="@container/board mx-auto flex w-full max-w-[min(100%,68dvh)] flex-1 items-center justify-center lg:max-w-none lg:min-h-0 lg:[container-type:size]">
-                    <div className="aspect-square w-full lg:w-[min(100cqw,100cqh)]">
+                  <div className="@container/board mx-auto flex w-full max-w-[min(100%,68dvh)] flex-1 items-center justify-center xl:max-w-none xl:min-h-0 xl:[container-type:size]">
+                    <div className="aspect-square w-full xl:w-[min(100cqw,100cqh)]">
                     <ChessBoard
                       fen={displayFen}
                       startFen={selectedPuzzle.fen ?? ''}
@@ -773,114 +1017,103 @@ export default function PuzzlesTab({
                 </div>
 
                 {/* Detail panel */}
-                <div className="custom-scrollbar min-w-0 self-start overflow-hidden rounded-xl lg:h-full lg:self-stretch lg:overflow-y-auto" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
-                  {/* Verdict banner */}
+                <div className="custom-scrollbar min-w-0 self-start overflow-hidden rounded-xl xl:h-full xl:self-stretch xl:overflow-y-auto" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                  {/* Model + verdict */}
                   <div
-                    className="px-4 py-3 flex items-center justify-between"
+                    className="flex items-center gap-3 px-4 py-3"
                     style={{
-                      background: selectedCorrect === true ? 'var(--success-light)' : selectedCorrect === false ? 'var(--danger-light)' : 'var(--border-subtle)',
-                      borderBottom: `1px solid ${selectedCorrect === true ? 'var(--success-border)' : selectedCorrect === false ? 'var(--danger-border)' : 'var(--border)'}`,
+                      borderBottom: '1px solid var(--border-subtle)',
+                      boxShadow: `inset 0 2px 0 ${verdict.color}`,
                     }}
                   >
-                    <div className="flex items-center gap-2">
-                      {selectedCorrect !== null ? (
-                        selectedCorrect ? (
-                          <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ border: '1px solid var(--success-border)' }}>
-                            <Check className="w-3.5 h-3.5" style={{ color: 'var(--success)' }} />
-                          </div>
-                        ) : (
-                          <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ border: '1px solid var(--danger-border)' }}>
-                            <X className="w-3.5 h-3.5" style={{ color: 'var(--danger)' }} />
-                          </div>
-                        )
-                      ) : (
-                        <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ background: 'var(--border)' }}>
-                          <span className="text-[10px] font-bold" style={{ color: 'var(--text-tertiary)' }}>?</span>
-                        </div>
-                      )}
-                      <span className="text-sm font-bold" style={{
-                        color: selectedCorrect === true ? 'var(--success)' : selectedCorrect === false ? 'var(--danger)' : 'var(--text-tertiary)',
-                      }}>
-                        {selectedCorrect === true ? 'Correct' : selectedCorrect === false ? 'Incorrect' : 'No Data'}
-                      </span>
+                    {modelLogo && (
+                      <Image src={modelLogo} alt="" width={18} height={18} unoptimized className={`h-[18px] w-[18px] shrink-0 ${getModelLogoClass(modelLogo)}`} />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-semibold" style={{ color: 'var(--text-primary)' }} title={selectedModel?.name}>
+                        {selectedModel?.name ?? 'No model'}
+                      </div>
                     </div>
+                    <span
+                      className="inline-flex shrink-0 items-center gap-1 rounded-full py-0.5 pr-2.5 pl-1.5 text-xs font-semibold"
+                      style={{ background: verdict.bg, color: verdict.color, boxShadow: `inset 0 0 0 1px ${verdict.border}` }}
+                      aria-live="polite"
+                    >
+                      {selectedCorrect === true ? <Check className="h-3.5 w-3.5" /> : selectedCorrect === false ? <X className="h-3.5 w-3.5" /> : <span className="w-1" />}
+                      {verdict.label}
+                    </span>
                   </div>
 
+                  {attemptsFailed && !selectedAttempt && (
+                    <div className="flex items-center justify-between gap-3 px-4 py-2.5 text-xs" style={{ background: 'var(--danger-light)', borderBottom: '1px solid var(--danger-border)', color: 'var(--text-secondary)' }} role="alert">
+                      Couldn&apos;t load this model&apos;s answers.
+                      <button type="button" onClick={retryAttempts} className="inline-flex items-center gap-1 font-medium hover:underline" style={{ color: 'var(--text-primary)' }}>
+                        <RotateCw className="h-3 w-3" /> Retry
+                      </button>
+                    </div>
+                  )}
+
                   {/* Moves comparison */}
-                  <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <span className="w-2 h-2 rounded-full" style={{ background: 'var(--success)' }} />
-                          <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--success)' }}>
-                            Expected
+                  <div className="space-y-4 px-4 py-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                    <div>
+                      <div className="mb-1.5 flex items-center gap-1.5">
+                        <span className="h-1 w-3 rounded-full" style={{ background: ARROW_COLORS.expected }} />
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--text-tertiary)' }}>Solution</span>
+                      </div>
+                      <MoveLine san={selectedAttempt?.expectedSanLine} uci={selectedPuzzleExpected} />
+                    </div>
+                    <div>
+                      <div className="mb-1.5 flex items-center gap-1.5">
+                        <span className="h-1 w-3 rounded-full" style={{ background: selectedCorrect === false ? ARROW_COLORS.model : ARROW_COLORS.expected }} />
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--text-tertiary)' }}>Model answer</span>
+                        {selectedAttempt?.parseStatus && selectedAttempt.parseStatus !== 'ok' && (
+                          <span
+                            className="ml-auto rounded px-1.5 py-px text-[11px] font-medium"
+                            style={{ background: 'var(--surface-raised)', color: 'var(--text-secondary)', boxShadow: 'inset 0 0 0 1px var(--border)' }}
+                            title={selectedAttempt.parseStatus}
+                          >
+                            {parseStatusLabel(selectedAttempt.parseStatus)}
                           </span>
-                        </div>
-                        <div className="break-all font-mono text-sm leading-relaxed" style={{ color: 'var(--text-primary)' }}>
-                          {selectedAttempt?.expectedSanLine || selectedPuzzleExpected || '—'}
-                        </div>
-                        {selectedAttempt?.expectedSanLine && (
-                          <div className="mt-0.5 break-all font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                            {selectedPuzzleExpected}
-                          </div>
                         )}
                       </div>
-                      <div>
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <span className="w-2 h-2 rounded-full" style={{ background: selectedCorrect === false ? 'var(--danger)' : 'var(--success)' }} />
-                          <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: selectedCorrect === false ? 'var(--danger)' : 'var(--success)' }}>
-                            Model
-                          </span>
-                          {selectedAttempt?.parseStatus && selectedAttempt.parseStatus !== 'ok' && (
-                            <span className="rounded px-1 py-px text-xs" style={{ background: 'var(--border-subtle)', color: 'var(--text-tertiary)' }}>
-                              {selectedAttempt.parseStatus}
-                            </span>
-                          )}
+                      {selectedAttempt ? (
+                        <MoveLine
+                          san={selectedAttempt.sanLine}
+                          uci={selectedAttempt.parsedLine ?? ''}
+                          compareTo={selectedPuzzleExpected}
+                          empty="No move given"
+                        />
+                      ) : (
+                        <div className="font-mono text-sm" style={{ color: 'var(--text-tertiary)' }}>
+                          {attemptsFailed ? '—' : 'Loading…'}
                         </div>
-                        <div className="break-all font-mono text-sm leading-relaxed" style={{ color: 'var(--text-primary)' }}>
-                          {selectedAttempt?.sanLine || selectedAttempt?.parsedLine || '—'}
-                        </div>
-                        {selectedAttempt?.sanLine && selectedAttempt?.parsedLine && (
-                          <div className="mt-0.5 break-all font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                            {selectedAttempt.parsedLine}
-                          </div>
-                        )}
-                      </div>
+                      )}
                     </div>
                   </div>
 
                   {/* Usage stats */}
-                  <div className="px-4 py-2.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <div className="grid grid-cols-3 gap-x-2 text-sm">
-                      <div className="flex flex-col">
-                        <span style={{ color: 'var(--text-tertiary)' }}>Prompt</span>
-                        <span className="font-mono tabular-nums" style={{ color: 'var(--text-primary)' }}>
-                          {(selectedAttempt?.usage.promptTokens ?? 0).toLocaleString()}
-                        </span>
+                  <dl className="grid grid-cols-3 gap-x-2 px-4 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                    {[
+                      ['Prompt', selectedAttempt ? selectedAttempt.usage.promptTokens.toLocaleString() : '—'],
+                      ['Completion', selectedAttempt ? selectedAttempt.usage.completionTokens.toLocaleString() : '—'],
+                      ['Latency', selectedAttempt ? formatLatency(selectedAttempt.latencyMs) : '—'],
+                    ].map(([label, value]) => (
+                      <div key={label} className="flex flex-col-reverse">
+                        <dt className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{label}</dt>
+                        <dd className="font-mono text-[13px] tabular-nums" style={{ color: 'var(--text-primary)' }}>{value}</dd>
                       </div>
-                      <div className="flex flex-col">
-                        <span style={{ color: 'var(--text-tertiary)' }}>Completion</span>
-                        <span className="font-mono tabular-nums" style={{ color: 'var(--text-primary)' }}>
-                          {(selectedAttempt?.usage.completionTokens ?? 0).toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="flex flex-col">
-                        <span style={{ color: 'var(--text-tertiary)' }}>Latency</span>
-                        <span className="font-mono tabular-nums" style={{ color: 'var(--text-primary)' }}>
-                          {Math.round(selectedAttempt?.latencyMs ?? 0)}ms
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+                    ))}
+                  </dl>
 
                   {/* Raw output + thinking */}
                   <div className="px-4 py-3" style={{ borderBottom: selectedPuzzle.source?.url ? '1px solid var(--border-subtle)' : 'none' }}>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
-                        Raw Output
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--text-tertiary)' }}>
+                        Raw output
                       </div>
                       {selectedAttempt?.rawOutputTruncated && !detail && (
                         <button
+                          type="button"
                           onClick={loadDetail}
                           disabled={detailLoadingKey === detailKey}
                           className="text-xs hover:underline disabled:opacity-50"
@@ -890,13 +1123,26 @@ export default function PuzzlesTab({
                         </button>
                       )}
                     </div>
-                    <pre className="custom-scrollbar max-h-28 overflow-y-auto whitespace-pre-wrap break-words font-mono text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                      {detail?.rawOutput ?? selectedAttempt?.rawOutput ?? '—'}
+                    <pre
+                      className="custom-scrollbar max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-md px-3 py-2 font-mono text-[12.5px] leading-relaxed"
+                      style={{ color: 'var(--text-secondary)', background: 'var(--background)', boxShadow: 'inset 0 0 0 1px var(--border-subtle)' }}
+                    >
+                      {(detail?.rawOutput ?? selectedAttempt?.rawOutput) || (selectedAttempt ? '(empty reply)' : '—')}
                       {selectedAttempt?.rawOutputTruncated && !detail && '…'}
                     </pre>
+                    {detailFailed && (
+                      <div className="mt-2 flex items-center gap-2 text-xs" style={{ color: 'var(--danger)' }} role="alert">
+                        Couldn&apos;t load the full reply.
+                        <button type="button" onClick={loadDetail} className="inline-flex items-center gap-1 font-medium hover:underline" style={{ color: 'var(--text-primary)' }}>
+                          <RotateCw className="h-3 w-3" /> Retry
+                        </button>
+                      </div>
+                    )}
                     {selectedAttempt && selectedAttempt.thinkingChars > 0 && (
                       <>
                         <button
+                          type="button"
+                          aria-expanded={showThinking}
                           onClick={() => {
                             setShowThinking((prev) => {
                               const next = !prev;
@@ -904,15 +1150,18 @@ export default function PuzzlesTab({
                               return next;
                             });
                           }}
-                          className="mt-2 flex items-center gap-1 text-sm hover:underline"
+                          className="mt-2.5 flex items-center gap-1 text-[13px] font-medium hover:underline"
                           style={{ color: 'var(--accent)' }}
                         >
-                          <ChevronDown className={`w-3 h-3 transition-transform ${showThinking ? '' : '-rotate-90'}`} />
-                          Thinking ({selectedAttempt.thinkingChars.toLocaleString()} chars)
+                          <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showThinking ? '' : '-rotate-90'}`} />
+                          Reasoning
+                          <span className="font-mono text-[11.5px] font-normal" style={{ color: 'var(--text-tertiary)' }}>
+                            {selectedAttempt.thinkingChars.toLocaleString()} chars
+                          </span>
                         </button>
                         {showThinking && (
-                          <pre className="mt-2 text-xs whitespace-pre-wrap break-words font-mono leading-relaxed max-h-48 overflow-y-auto custom-scrollbar rounded p-2" style={{ color: 'var(--text-tertiary)', background: 'var(--border-subtle)' }}>
-                            {detail?.thinkingText ?? (detailLoadingKey === detailKey ? 'Loading…' : '')}
+                          <pre className="custom-scrollbar mt-2 max-h-56 overflow-y-auto whitespace-pre-wrap break-words rounded-md px-3 py-2 font-mono text-xs leading-relaxed" style={{ color: 'var(--text-tertiary)', background: 'var(--background)', boxShadow: 'inset 0 0 0 1px var(--border-subtle)' }}>
+                            {detail?.thinkingText ?? (detailLoadingKey === detailKey ? 'Loading…' : detailFailed ? 'Unavailable.' : '')}
                           </pre>
                         )}
                       </>
@@ -921,16 +1170,17 @@ export default function PuzzlesTab({
 
                   {/* Links */}
                   {selectedPuzzle.source?.url && (
-                    <div className="px-4 py-2.5">
+                    <div className="px-4 py-3">
                       <a
                         href={selectedPuzzle.source.url}
                         target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors hover:bg-[var(--border-subtle)]"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors hover:border-[var(--accent-border)] hover:text-[var(--accent)]"
                         style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
                       >
-                        <ExternalLink className="w-3.5 h-3.5" />
+                        <ExternalLink className="h-3.5 w-3.5" />
                         View on Lichess
+                        <span className="sr-only"> (opens in new tab)</span>
                       </a>
                     </div>
                   )}

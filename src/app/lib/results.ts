@@ -6,7 +6,8 @@ import { cache } from 'react';
 import type { ExplorerResults, ModelView, PuzzleAttemptView, PuzzleView } from './results.types';
 
 const DATASET_PATH = path.resolve(process.cwd(), 'src/bench/data/puzzles.json');
-const RESULTS_DIR = path.resolve(process.cwd(), 'src/bench/results');
+// v2 (Lichess move-by-move) results only. v1 results stay in src/bench/results and the bench-v1 git tag.
+const RESULTS_DIR = path.resolve(process.cwd(), 'src/bench/results-v2');
 
 /**
  * Maximum raw-output size (characters) embedded in the initial RSC payload.
@@ -71,6 +72,11 @@ type RunFile = {
   modelId?: string;
   modelName?: string;
   benchmarkLabel?: string | null;
+  config?: {
+    temperature?: number | null;
+    maxTokens?: number | null;
+    reasoning?: { effort?: string | null } | null;
+  };
   summary?: {
     total?: number;
     parsed?: number;
@@ -226,6 +232,11 @@ function toModelView(run: RunFile): ModelView | null {
       totalPromptTokens: Math.max(0, Math.trunc(safeNumber(summary?.totalPromptTokens, totalPromptTokens))),
       totalCompletionTokens: Math.max(0, Math.trunc(safeNumber(summary?.totalCompletionTokens, totalCompletionTokens))),
       totalReasoningTokens: Math.max(0, Math.trunc(safeNumber(summary?.totalReasoningTokens, totalReasoningTokens))),
+    },
+    runConfig: {
+      temperature: typeof run.config?.temperature === 'number' ? run.config.temperature : null,
+      maxTokens: typeof run.config?.maxTokens === 'number' ? run.config.maxTokens : null,
+      reasoningEffort: typeof run.config?.reasoning?.effort === 'string' ? run.config.reasoning.effort : null,
     },
     marks: '',
     attemptsByPuzzleId,

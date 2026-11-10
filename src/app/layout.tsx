@@ -5,6 +5,8 @@ import "@lichess-org/chessground/assets/chessground.base.css";
 import "@lichess-org/chessground/assets/chessground.cburnett.css";
 import "@lichess-org/chessground/assets/chessground.brown.css";
 import { Analytics } from "@vercel/analytics/next";
+import { ViewTransition } from "react";
+import SiteHeader from "./components/SiteHeader";
 import { SITE_DESCRIPTION, SITE_NAME, getSiteUrl } from "./lib/site";
 
 const siteUrl = getSiteUrl();
@@ -19,8 +21,8 @@ const geistMono = Geist_Mono({
   variable: "--font-app-mono",
 });
 
-// Runs before paint so a saved light preference doesn't flash dark first.
-const THEME_SCRIPT = `try{var t=localStorage.getItem("theme");document.documentElement.dataset.theme=t==="light"?"light":"dark"}catch(e){}try{var tab=new URLSearchParams(location.search).get("tab");if(tab==="benchmark"||tab==="leaderboard"||location.hash==="#benchmarks")document.documentElement.dataset.benchTab="leaderboard"}catch(e){}`;
+// Runs before paint so a leaderboard deep link doesn't flash the puzzle view first.
+const TAB_SCRIPT = `try{var tab=new URLSearchParams(location.search).get("tab");if(tab==="benchmark"||tab==="leaderboard"||location.hash==="#benchmarks")document.documentElement.dataset.benchTab="leaderboard"}catch(e){}`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -51,10 +53,8 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#121110" },
-    { media: "(prefers-color-scheme: light)", color: "#f6f4ef" },
-  ],
+  themeColor: "#121110",
+  colorScheme: "dark",
 };
 
 export default function RootLayout({
@@ -63,12 +63,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" data-theme="dark" suppressHydrationWarning>
+    // The head script sets data-bench-tab before hydration; suppress the attribute mismatch.
+    <html lang="en" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+        <script dangerouslySetInnerHTML={{ __html: TAB_SCRIPT }} />
       </head>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        {children}
+      <body className={`${geistSans.variable} ${geistMono.variable} bg-[var(--background)] font-sans text-[var(--text-primary)] antialiased`}>
+        <div className="mx-auto flex min-h-dvh w-full max-w-[1500px] flex-col px-3 pt-4 pb-6 sm:px-5 sm:pt-5 sm:pb-8 lg:px-8 xl:px-10">
+          {/* Outside the transition, so it stays put while pages crossfade beneath it. */}
+          <SiteHeader />
+          <ViewTransition default="page-fade">
+            <main className="flex min-w-0 flex-1 flex-col">{children}</main>
+          </ViewTransition>
+        </div>
         <Analytics />
       </body>
     </html>

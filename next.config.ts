@@ -9,6 +9,9 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: turbopackRoot,
   },
+  async redirects() {
+    return [{ source: "/dataset", destination: "/methodology", permanent: true }];
+  },
 };
 
 export default nextConfig;

@@ -62,6 +62,12 @@ export type ModelView = {
    * Lets the puzzle list paint without embedding every model's full attempts.
    */
   marks: string;
+  /** Request settings the run actually used; null when the run file predates them. */
+  runConfig: {
+    temperature: number | null;
+    maxTokens: number | null;
+    reasoningEffort: string | null;
+  };
   attemptsByPuzzleId: Record<string, PuzzleAttemptView>;
 };
 

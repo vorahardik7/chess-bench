@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useState, useSyncExternalStore, type ComponentType } from 'react';
 import { Puzzle, Trophy, type LucideIcon } from 'lucide-react';
 import PuzzlesTab from './PuzzlesTab';
+import BrandLoader from './BrandLoader';
 import type { ExplorerResults } from '../lib/results.types';
 
 type BenchmarksComponent = ComponentType<{ results: ExplorerResults }>;
@@ -18,39 +19,10 @@ function preloadBenchmarks() {
 
 function LeaderboardSkeleton() {
   return (
-    <div
-      className="standings-wait rounded-xl p-4 sm:p-5"
-      style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
-      role="status"
-      aria-live="polite"
-    >
-      <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="h-6 w-28 rounded-md" style={{ background: 'var(--surface-raised)' }} />
-          <div className="mt-2 h-3.5 w-56 max-w-full rounded-md" style={{ background: 'var(--border-subtle)' }} />
-        </div>
-        <div className="h-9 w-full rounded-lg sm:w-72" style={{ background: 'var(--surface-raised)' }} />
+    <div className="grid min-h-[max(640px,calc(100dvh-14rem))] place-items-center rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+      <div className="loader-enter">
+        <BrandLoader label="Loading standings" size={36} />
       </div>
-      <div className="overflow-hidden rounded-lg" style={{ border: '1px solid var(--border)' }}>
-        {Array.from({ length: 8 }, (_, index) => (
-          <div
-            key={index}
-            className="flex items-center gap-4 px-4 py-3.5"
-            style={{ borderTop: index === 0 ? undefined : '1px solid var(--border)' }}
-          >
-            <div className="h-3 w-5 shrink-0 rounded" style={{ background: 'var(--border-subtle)' }} />
-            <div
-              className="h-3 rounded"
-              style={{
-                width: `${38 + (index % 4) * 9}%`,
-                background: 'var(--border-subtle)',
-              }}
-            />
-            <div className="ml-auto h-3 w-12 shrink-0 rounded" style={{ background: 'var(--border-subtle)' }} />
-          </div>
-        ))}
-      </div>
-      <span className="sr-only">Loading standings</span>
     </div>
   );
 }
@@ -202,7 +174,7 @@ export default function BenchmarkExplorer({
         hidden={view !== 'puzzles'}
         className={
           view === 'puzzles'
-            ? `${hasSwitched ? 'view-enter ' : ''}flex flex-col lg:h-[calc(100dvh-12rem)] lg:min-h-0`
+            ? `${hasSwitched ? 'view-enter ' : ''}flex flex-col xl:h-[calc(100dvh-12rem)] xl:min-h-[640px]`
             : 'hidden'
         }
       >
