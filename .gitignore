@@ -43,3 +43,6 @@ next-env.d.ts
 
 # bench artifacts
 src/bench/data/.cache/
+
+# benchmark checkpoints (unfinished runs)
+*.in-progress.tmp
