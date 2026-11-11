@@ -326,66 +326,178 @@ function formatLatency(ms: number): string {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)}s`;
 }
 
-/**
- * A move line as tokens that never break mid-move. Opponent replies (odd plies) are
- * dimmed. With `compareTo`, everything from the first ply that differs from the
- * solution is marked, so a wrong answer shows where it went off.
- */
-function MoveLine({
-  san,
-  uci,
-  compareTo,
-  empty = '—',
-}: {
-  san?: string | null;
-  uci: string;
-  compareTo?: string;
-  empty?: string;
-}) {
+type LineToken = { san: string; uci: string };
+
+function toTokens(san: string | null | undefined, uci: string): LineToken[] {
   const uciTokens = uci.trim() ? uci.trim().split(/\s+/) : [];
   const sanTokens = san?.trim() ? san.trim().split(/\s+/) : [];
-  const shown = sanTokens.length === uciTokens.length && sanTokens.length > 0 ? sanTokens : uciTokens;
-  if (shown.length === 0) {
-    return <div className="font-mono text-sm" style={{ color: 'var(--text-tertiary)' }}>{empty}</div>;
-  }
-  const expected = compareTo?.trim() ? compareTo.trim().split(/\s+/) : null;
-  const firstMiss = expected
-    ? (() => {
-        const i = uciTokens.findIndex((move, idx) => move !== expected[idx]);
-        if (i >= 0) return i;
-        return uciTokens.length !== expected.length ? uciTokens.length : -1;
-      })()
-    : -1;
+  const useSan = sanTokens.length === uciTokens.length;
+  return uciTokens.map((u, i) => ({ san: useSan ? sanTokens[i] : u, uci: u }));
+}
+
+/**
+ * Solution and model answer side by side, one row per ply. The model's own moves
+ * get a turn number and a verdict; opponent replies are dimmed. From the first ply
+ * that differs from the solution, the model column is marked so a wrong answer
+ * shows where it went off.
+ */
+function MoveComparison({
+  expected,
+  model,
+  modelState,
+  modelColor,
+  badge,
+}: {
+  expected: LineToken[];
+  model: LineToken[];
+  /** 'ready' shows the model column; otherwise a placeholder fills it. */
+  modelState: 'ready' | 'loading' | 'unavailable';
+  modelColor: string;
+  badge?: React.ReactNode;
+}) {
+  const ready = modelState === 'ready';
+  const firstMiss = (() => {
+    if (!ready) return -1;
+    const i = model.findIndex((m, idx) => m.uci !== expected[idx]?.uci);
+    if (i >= 0) return i;
+    return model.length < expected.length ? model.length : -1;
+  })();
+  const rows = Math.max(expected.length, ready ? model.length : 0, 1);
+  const placeholder = modelState === 'loading' ? 'Loading…' : '—';
+
+  const cell = (token: LineToken | undefined, reply: boolean) =>
+    token ? (
+      <span className="flex min-w-0 items-baseline gap-2" title={token.uci}>
+        <span
+          className="font-mono text-[15px] font-medium whitespace-nowrap"
+          style={{ color: reply ? 'var(--text-secondary)' : 'var(--text-primary)' }}
+        >
+          {token.san}
+        </span>
+        {token.san !== token.uci && (
+          <span className="truncate font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+            {token.uci}
+          </span>
+        )}
+      </span>
+    ) : null;
 
   return (
-    <div>
-      <div className="flex flex-wrap gap-1.5">
-        {shown.map((move, i) => {
-          const missed = firstMiss >= 0 && i >= firstMiss;
-          const first = i === firstMiss;
+    <div className="overflow-hidden rounded-lg" style={{ boxShadow: 'inset 0 0 0 1px var(--border-subtle)' }}>
+      <div
+        className="grid grid-cols-[2rem_minmax(0,1fr)_minmax(0,1fr)_1.25rem] items-center gap-x-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em]"
+        style={{ color: 'var(--text-tertiary)', background: 'var(--surface-raised)', borderBottom: '1px solid var(--border-subtle)' }}
+      >
+        <span aria-hidden="true" />
+        <span className="flex items-center gap-1.5">
+          <span className="h-1 w-3 rounded-full" style={{ background: ARROW_COLORS.expected }} />
+          Solution
+        </span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="h-1 w-3 shrink-0 rounded-full" style={{ background: modelColor }} />
+          Model
+        </span>
+        <span aria-hidden="true" />
+      </div>
+      <ol>
+        {Array.from({ length: rows }, (_, i) => {
+          const reply = i % 2 === 1;
+          const exp = expected[i];
+          const mod = ready ? model[i] : undefined;
+          const isFirstMiss = i === firstMiss;
+          const afterMiss = firstMiss >= 0 && i > firstMiss;
+          const ok = ready && !reply && (firstMiss < 0 || i < firstMiss);
           return (
-            <span
-              key={`${move}-${i}`}
-              className="rounded-md px-2 py-0.5 font-mono text-[15px] font-medium whitespace-nowrap"
+            <li
+              key={i}
+              className="grid grid-cols-[2rem_minmax(0,1fr)_minmax(0,1fr)_1.25rem] items-center gap-x-2 px-3 py-1.5"
               style={{
-                color: missed ? 'var(--danger)' : i % 2 === 1 ? 'var(--text-secondary)' : 'var(--text-primary)',
-                background: first ? 'var(--danger-light)' : 'var(--surface-raised)',
-                boxShadow: `inset 0 0 0 1px ${first ? 'var(--danger-border)' : 'var(--border-subtle)'}`,
-                opacity: missed && !first ? 0.75 : 1,
+                borderTop: i > 0 && !reply ? '1px solid var(--border-subtle)' : undefined,
+                background: isFirstMiss ? 'var(--danger-light)' : undefined,
               }}
-              title={uciTokens[i]}
             >
-              {move}
-            </span>
+              <span className="font-mono text-[12px] tabular-nums" style={{ color: 'var(--text-tertiary)' }}>
+                {reply ? '' : `${i / 2 + 1}.`}
+              </span>
+              {cell(exp, reply) ?? <span style={{ color: 'var(--text-tertiary)' }}>—</span>}
+              <span className="min-w-0" style={{ opacity: afterMiss ? 0.6 : 1 }}>
+                {!ready ? (
+                  i === 0 && <span className="font-mono text-sm" style={{ color: 'var(--text-tertiary)' }}>{placeholder}</span>
+                ) : mod && (isFirstMiss || afterMiss) ? (
+                  <span className="font-mono text-[15px] font-medium whitespace-nowrap" style={{ color: 'var(--danger)' }} title={mod.uci}>
+                    {mod.san}
+                  </span>
+                ) : mod ? (
+                  cell(mod, reply)
+                ) : isFirstMiss ? (
+                  <span className="text-[13px] italic" style={{ color: 'var(--danger)' }}>
+                    {i === 0 ? 'No move given' : 'Stopped'}
+                  </span>
+                ) : null}
+              </span>
+              <span className="flex justify-end">
+                {ok && <Check className="h-3.5 w-3.5" style={{ color: 'var(--success)' }} aria-label="Matches solution" />}
+                {isFirstMiss && <X className="h-3.5 w-3.5" style={{ color: 'var(--danger)' }} aria-label="Differs from solution" />}
+              </span>
+            </li>
           );
         })}
-      </div>
-      {shown !== uciTokens && (
-        <div className="mt-1.5 font-mono text-[11.5px]" style={{ color: 'var(--text-tertiary)' }}>
-          {uciTokens.join(' ')}
+      </ol>
+      {badge && (
+        <div className="px-3 py-2 text-[12px]" style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}>
+          {badge}
         </div>
       )}
     </div>
+  );
+}
+
+/** Splits a multi-turn reply ("[Turn 1]\n…\n\n[Turn 2]\n…") into its turns. */
+function splitTurns(raw: string): { turn: string; text: string }[] | null {
+  if (!/^\s*\[Turn \d+\]/.test(raw)) return null;
+  const parts = raw.trim().split(/^\[Turn (\d+)\][ \t]*$/m);
+  const turns: { turn: string; text: string }[] = [];
+  for (let i = 1; i < parts.length; i += 2) {
+    turns.push({ turn: parts[i], text: (parts[i + 1] ?? '').trim() });
+  }
+  return turns.length > 0 ? turns : null;
+}
+
+function RawOutput({ text, truncated }: { text: string; truncated: boolean }) {
+  const turns = splitTurns(text);
+  const boxStyle = { background: 'var(--background)', boxShadow: 'inset 0 0 0 1px var(--border-subtle)' };
+  if (!turns) {
+    return (
+      <pre
+        className="custom-scrollbar max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-lg px-3 py-2.5 font-mono text-[12.5px] leading-relaxed"
+        style={{ ...boxStyle, color: 'var(--text-secondary)' }}
+      >
+        {text}
+        {truncated && '…'}
+      </pre>
+    );
+  }
+  return (
+    <ol className="custom-scrollbar max-h-48 overflow-y-auto rounded-lg" style={boxStyle}>
+      {turns.map(({ turn, text: body }, i) => (
+        <li
+          key={turn + i}
+          className="flex items-start gap-3 px-3 py-2"
+          style={{ borderTop: i > 0 ? '1px solid var(--border-subtle)' : undefined }}
+        >
+          <span
+            className="mt-px shrink-0 rounded px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-[0.06em]"
+            style={{ background: 'var(--surface-raised)', color: 'var(--text-tertiary)', boxShadow: 'inset 0 0 0 1px var(--border-subtle)' }}
+          >
+            Turn {turn}
+          </span>
+          <pre className="min-w-0 flex-1 whitespace-pre-wrap break-words font-mono text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+            {body || <span style={{ color: 'var(--text-tertiary)' }}>(empty)</span>}
+            {truncated && i === turns.length - 1 && '…'}
+          </pre>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -1017,7 +1129,7 @@ export default function PuzzlesTab({
                 </div>
 
                 {/* Detail panel */}
-                <div className="custom-scrollbar min-w-0 self-start overflow-hidden rounded-xl xl:h-full xl:self-stretch xl:overflow-y-auto" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                <div className="custom-scrollbar flex min-w-0 flex-col self-start overflow-hidden rounded-xl xl:h-full xl:self-stretch xl:overflow-y-auto" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
                   {/* Model + verdict */}
                   <div
                     className="flex items-center gap-3 px-4 py-3"
@@ -1054,60 +1166,47 @@ export default function PuzzlesTab({
                   )}
 
                   {/* Moves comparison */}
-                  <div className="space-y-4 px-4 py-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <div>
-                      <div className="mb-1.5 flex items-center gap-1.5">
-                        <span className="h-1 w-3 rounded-full" style={{ background: ARROW_COLORS.expected }} />
-                        <span className="text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--text-tertiary)' }}>Solution</span>
-                      </div>
-                      <MoveLine san={selectedAttempt?.expectedSanLine} uci={selectedPuzzleExpected} />
-                    </div>
-                    <div>
-                      <div className="mb-1.5 flex items-center gap-1.5">
-                        <span className="h-1 w-3 rounded-full" style={{ background: selectedCorrect === false ? ARROW_COLORS.model : ARROW_COLORS.expected }} />
-                        <span className="text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--text-tertiary)' }}>Model answer</span>
-                        {selectedAttempt?.parseStatus && selectedAttempt.parseStatus !== 'ok' && (
-                          <span
-                            className="ml-auto rounded px-1.5 py-px text-[11px] font-medium"
-                            style={{ background: 'var(--surface-raised)', color: 'var(--text-secondary)', boxShadow: 'inset 0 0 0 1px var(--border)' }}
-                            title={selectedAttempt.parseStatus}
-                          >
+                  <div className="px-4 py-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                    <MoveComparison
+                      expected={toTokens(selectedAttempt?.expectedSanLine, selectedPuzzleExpected)}
+                      model={selectedAttempt ? toTokens(selectedAttempt.sanLine, selectedAttempt.parsedLine ?? '') : []}
+                      modelState={selectedAttempt ? 'ready' : attemptsFailed ? 'unavailable' : 'loading'}
+                      modelColor={selectedCorrect === false ? ARROW_COLORS.model : ARROW_COLORS.expected}
+                      badge={
+                        selectedAttempt?.parseStatus && selectedAttempt.parseStatus !== 'ok' ? (
+                          <span title={selectedAttempt.parseStatus}>
+                            <span style={{ color: 'var(--text-tertiary)' }}>Parse: </span>
                             {parseStatusLabel(selectedAttempt.parseStatus)}
                           </span>
-                        )}
-                      </div>
-                      {selectedAttempt ? (
-                        <MoveLine
-                          san={selectedAttempt.sanLine}
-                          uci={selectedAttempt.parsedLine ?? ''}
-                          compareTo={selectedPuzzleExpected}
-                          empty="No move given"
-                        />
-                      ) : (
-                        <div className="font-mono text-sm" style={{ color: 'var(--text-tertiary)' }}>
-                          {attemptsFailed ? '—' : 'Loading…'}
-                        </div>
-                      )}
-                    </div>
+                        ) : undefined
+                      }
+                    />
                   </div>
 
                   {/* Usage stats */}
-                  <dl className="grid grid-cols-3 gap-x-2 px-4 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                  <dl className="grid grid-cols-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                     {[
-                      ['Prompt', selectedAttempt ? selectedAttempt.usage.promptTokens.toLocaleString() : '—'],
-                      ['Completion', selectedAttempt ? selectedAttempt.usage.completionTokens.toLocaleString() : '—'],
-                      ['Latency', selectedAttempt ? formatLatency(selectedAttempt.latencyMs) : '—'],
-                    ].map(([label, value]) => (
-                      <div key={label} className="flex flex-col-reverse">
-                        <dt className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{label}</dt>
-                        <dd className="font-mono text-[13px] tabular-nums" style={{ color: 'var(--text-primary)' }}>{value}</dd>
+                      ['Prompt', selectedAttempt ? selectedAttempt.usage.promptTokens.toLocaleString() : '—', 'tokens'],
+                      ['Completion', selectedAttempt ? selectedAttempt.usage.completionTokens.toLocaleString() : '—', 'tokens'],
+                      ['Latency', selectedAttempt ? formatLatency(selectedAttempt.latencyMs) : '—', ''],
+                    ].map(([label, value, unit], i) => (
+                      <div
+                        key={label}
+                        className="flex flex-col gap-1 px-4 py-3"
+                        style={{ borderLeft: i > 0 ? '1px solid var(--border-subtle)' : undefined }}
+                      >
+                        <dt className="text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--text-tertiary)' }}>{label}</dt>
+                        <dd className="flex items-baseline gap-1 font-mono text-[15px] tabular-nums" style={{ color: 'var(--text-primary)' }}>
+                          {value}
+                          {unit && value !== '—' && <span className="font-sans text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{unit}</span>}
+                        </dd>
                       </div>
                     ))}
                   </dl>
 
                   {/* Raw output + thinking */}
-                  <div className="px-4 py-3" style={{ borderBottom: selectedPuzzle.source?.url ? '1px solid var(--border-subtle)' : 'none' }}>
-                    <div className="mb-1.5 flex items-center justify-between">
+                  <div className="px-4 py-4">
+                    <div className="mb-2 flex items-center justify-between">
                       <div className="text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--text-tertiary)' }}>
                         Raw output
                       </div>
@@ -1123,13 +1222,10 @@ export default function PuzzlesTab({
                         </button>
                       )}
                     </div>
-                    <pre
-                      className="custom-scrollbar max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-md px-3 py-2 font-mono text-[12.5px] leading-relaxed"
-                      style={{ color: 'var(--text-secondary)', background: 'var(--background)', boxShadow: 'inset 0 0 0 1px var(--border-subtle)' }}
-                    >
-                      {(detail?.rawOutput ?? selectedAttempt?.rawOutput) || (selectedAttempt ? '(empty reply)' : '—')}
-                      {selectedAttempt?.rawOutputTruncated && !detail && '…'}
-                    </pre>
+                    <RawOutput
+                      text={(detail?.rawOutput ?? selectedAttempt?.rawOutput) || (selectedAttempt ? '(empty reply)' : '—')}
+                      truncated={Boolean(selectedAttempt?.rawOutputTruncated && !detail)}
+                    />
                     {detailFailed && (
                       <div className="mt-2 flex items-center gap-2 text-xs" style={{ color: 'var(--danger)' }} role="alert">
                         Couldn&apos;t load the full reply.
@@ -1170,13 +1266,13 @@ export default function PuzzlesTab({
 
                   {/* Links */}
                   {selectedPuzzle.source?.url && (
-                    <div className="px-4 py-3">
+                    <div className="mt-auto px-4 py-3" style={{ borderTop: '1px solid var(--border-subtle)', background: 'var(--surface-raised)' }}>
                       <a
                         href={selectedPuzzle.source.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors hover:border-[var(--accent-border)] hover:text-[var(--accent)]"
-                        style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                        className="flex w-full items-center justify-center gap-1.5 rounded-md px-2.5 py-2 text-[13px] font-medium transition-colors hover:border-[var(--accent-border)] hover:text-[var(--accent)]"
+                        style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)', background: 'var(--surface)' }}
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
                         View on Lichess

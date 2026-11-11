@@ -244,8 +244,13 @@ input[data-seamless]:focus-visible {
   background: rgba(235, 229, 214, 0.24);
 }
 
-/* Board: walnut and brass squares inside a thin gold frame */
-.cg-wrap-brown {
+/* Board: walnut and brass squares inside a thin gold frame.
+   Chessground snaps cg-container to a multiple of 8 device pixels, so it can be
+   a few pixels smaller than the wrap. Frame and center the container itself so
+   the border hugs the squares instead of leaving a gap on the right and bottom. */
+.cg-wrap.cg-wrap-brown cg-container {
+  inset: 0;
+  margin: auto;
   border-radius: 6px;
   overflow: hidden;
   box-shadow:

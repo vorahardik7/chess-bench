@@ -1,9 +1,6 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
-import Link from 'next/link';
 import {
-  ArrowRight,
-  ArrowUpRight,
   CircleCheck,
   CircleX,
   Coins,
@@ -97,7 +94,6 @@ const SECTIONS: TocItem[] = [
   { id: 'replies', index: '04', title: 'Reading replies' },
   { id: 'scoring', index: '05', title: 'Scoring' },
   { id: 'limits', index: '06', title: 'Limitations' },
-  { id: 'sources', index: '07', title: 'Sources' },
 ];
 
 function Section({ id, lede, children }: { id: string; lede?: ReactNode; children: ReactNode }) {
@@ -247,7 +243,7 @@ export default async function MethodologyPage() {
     { value: formatInteger(puzzles.length), label: 'Puzzles' },
     { value: String(tracks.length), label: 'Tactic types' },
     { value: String(bands.length), label: 'Rating bands' },
-    { value: formatInteger(models.length), label: 'Models tested' },
+    { value: formatInteger(models.length), label: models.length === 1 ? 'Model' : 'Models' },
     { value: formatInteger(attempts.length), label: 'Graded answers' },
   ];
 
@@ -300,35 +296,40 @@ export default async function MethodologyPage() {
       <StructuredData data={structuredData} />
 
         {/* Hero */}
-        <section className="relative pt-10 pb-10 sm:pt-14">
-          <div className="relative">
-            <h1 className="max-w-3xl text-[34px] font-semibold leading-[1.1] tracking-[-0.03em] text-balance sm:text-[46px]">
-              How ChessBench scores a model
-            </h1>
-            <p className="mt-4 max-w-2xl text-[16px] leading-7 text-pretty text-[var(--text-secondary)]">
-              Every model sees the same Lichess puzzles with the same prompt and gets one try at each. It plays one move at a
-              time, as a person would on Lichess, and every move has to be the solution move or checkmate.
-            </p>
+        <section className="pt-10 pb-12 sm:pt-14">
+          <h1 className="max-w-3xl text-[34px] font-semibold leading-[1.1] tracking-[-0.03em] text-balance sm:text-[46px]">
+            How ChessBench scores a model
+          </h1>
+          <p className="mt-4 max-w-2xl text-[16px] leading-7 text-pretty text-[var(--text-secondary)]">
+            Every model gets the same puzzles from the{' '}
+            <a
+              href="https://database.lichess.org/#puzzles"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[var(--text-primary)] underline decoration-[var(--accent-border)] underline-offset-[3px] transition-colors hover:decoration-[var(--accent)]"
+            >
+              Lichess puzzle database
+              <span className="sr-only"> (opens in new tab)</span>
+            </a>
+            , the same prompt, and one try at each. It plays one move at a time, as a person would on Lichess, and every move
+            has to be the solution move or checkmate.
+          </p>
 
-            <dl className="mt-10 grid grid-cols-2 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] sm:grid-cols-5">
-              {facts.map((fact, i) => (
-                <div
-                  key={fact.label}
-                  className={`flex flex-col-reverse gap-1 border-[var(--border-subtle)] px-5 py-4 ${
-                    i > 0 ? 'sm:border-l' : ''
-                  } ${i % 2 === 1 ? 'border-l sm:border-l' : ''} ${i >= 2 ? 'border-t sm:border-t-0' : ''} ${
-                    i === facts.length - 1 ? 'col-span-2 sm:col-span-1' : ''
-                  }`}
-                >
-                  <dt className="text-[12px] text-[var(--text-tertiary)]">{fact.label}</dt>
-                  <dd className="font-mono text-[26px] font-semibold leading-none tabular-nums tracking-[-0.02em] text-[var(--text-primary)]">
+          <div className="mt-9 flex flex-col gap-5 border-t border-[var(--border-subtle)] pt-6 lg:flex-row lg:items-end lg:justify-between">
+            <dl className="grid grid-cols-3 gap-x-6 gap-y-5 sm:flex sm:gap-0 sm:divide-x sm:divide-[var(--border-subtle)]">
+              {facts.map((fact) => (
+                <div key={fact.label} className="flex flex-col-reverse gap-1.5 sm:px-7 sm:first:pl-0">
+                  <dt className="text-[12px] whitespace-nowrap text-[var(--text-tertiary)]">{fact.label}</dt>
+                  <dd className="font-mono text-[24px] font-semibold leading-none tabular-nums tracking-[-0.02em] text-[var(--text-primary)]">
                     {fact.value}
                   </dd>
                 </div>
               ))}
             </dl>
-            <p className="mt-3 font-mono text-[11px] break-words text-[var(--text-tertiary)]">
-              Dataset {results.datasetId ?? 'unavailable'} · generated {formatDate(results.generatedAt)} UTC
+            <p className="font-mono text-[11px] leading-5 break-words text-[var(--text-tertiary)] lg:text-right">
+              {results.datasetId ?? 'Dataset unavailable'}
+              <br />
+              generated {formatDate(results.generatedAt)} UTC
             </p>
           </div>
         </section>
@@ -600,7 +601,7 @@ export default async function MethodologyPage() {
                     [Crosshair, 'Move by move', "Each of the model's moves must be the Lichess move, or any move that gives checkmate. The opponent's replies come from Lichess; the model never has to guess them."],
                     [Repeat1, 'One try', 'One answer per move, no second chances. A wrong, illegal, unreadable or blank answer ends the puzzle. API failures are retried, never scored.'],
                     [Percent, 'Accuracy', `Solved puzzles divided by ${puzzles.length}.${tacticsBalanced ? ' Every tactic has the same number of puzzles, so this is also the average of the tactic scores.' : ''}`],
-                    [Coins, 'Cost', 'Tokens and dollars as OpenRouter reported them, summed over every move of the run.'],
+                    [Coins, 'Cost', "Tokens as OpenRouter reported them, priced at the model's standard API rate and summed over every move of the run."],
                   ] as const
                 ).map(([icon, title, body]) => (
                   <li key={title} className="flex gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
@@ -643,42 +644,6 @@ export default async function MethodologyPage() {
               </div>
             </Section>
 
-            {/* 07 Sources */}
-            <Section id="sources">
-              <div className="grid gap-3 sm:grid-cols-3">
-                {[
-                  { href: 'https://database.lichess.org/#puzzles', title: 'Lichess puzzle database', body: 'The positions, and the solutions this benchmark treats as correct.', external: true },
-                  { href: 'https://github.com/vorahardik7/chess-bench', title: 'ChessBench on GitHub', body: 'The sampler, the prompt, the parser, and the raw results.', external: true },
-                  { href: '/', title: 'Puzzle explorer', body: 'Every answer from every model, one puzzle at a time.', external: false },
-                ].map((link) => {
-                  const Arrow = link.external ? ArrowUpRight : ArrowRight;
-                  const content = (
-                    <>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-[15px] font-semibold">{link.title}</span>
-                        <Arrow
-                          aria-hidden
-                          className="h-4 w-4 shrink-0 text-[var(--text-tertiary)] transition-[color,transform] group-hover:translate-x-0.5 group-hover:text-[var(--accent)]"
-                        />
-                      </div>
-                      <p className="mt-1.5 text-[13.5px] leading-[1.6] text-[var(--text-secondary)]">{link.body}</p>
-                    </>
-                  );
-                  const className =
-                    'group block rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 transition-colors hover:border-[var(--accent-border)] hover:bg-[var(--surface-raised)]';
-                  return link.external ? (
-                    <a key={link.title} href={link.href} target="_blank" rel="noopener noreferrer" className={className}>
-                      {content}
-                      <span className="sr-only"> (opens in new tab)</span>
-                    </a>
-                  ) : (
-                    <Link key={link.title} href={link.href} className={className}>
-                      {content}
-                    </Link>
-                  );
-                })}
-              </div>
-            </Section>
           </div>
         </div>
     </div>
