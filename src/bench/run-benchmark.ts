@@ -302,8 +302,26 @@ async function loadModelInfo(id) {
     supportedEfforts: Array.isArray(row.reasoning?.supported_efforts) ? row.reasoning.supported_efforts : null,
     defaultEffort: row.reasoning?.default_effort ?? null,
     maxCompletionTokens: finiteNumberOrNull(row.top_provider?.max_completion_tokens),
+    pricing: listPricing(row.pricing),
     source: "models-endpoint",
   };
+}
+
+/**
+ * The model's standard per-token price from /models. The site prices every run as tokens x this
+ * rate, so runs routed to a discounted endpoint (or billed via BYOK) compare fairly with the rest.
+ * The amount actually billed stays in usage.cost.
+ */
+function listPricing(pricing) {
+  const prompt = Number(pricing?.prompt);
+  const completion = Number(pricing?.completion);
+  if (!Number.isFinite(prompt) || !Number.isFinite(completion) || prompt < 0 || completion < 0) return null;
+  return { prompt, completion, source: "openrouter-models", fetchedAt: new Date().toISOString() };
+}
+
+function costAtListPrice(usage, pricing) {
+  if (!pricing) return null;
+  return usage.promptTokens * pricing.prompt + usage.completionTokens * pricing.completion;
 }
 
 function buildRequest(messages) {
@@ -757,6 +775,7 @@ async function main() {
       supportedEfforts: modelInfo.supportedEfforts ?? null,
       defaultEffort: modelInfo.defaultEffort ?? null,
       maxCompletionTokens: modelInfo.maxCompletionTokens ?? null,
+      pricing: modelInfo.pricing ?? null,
     },
   };
 
@@ -892,8 +911,13 @@ async function main() {
   );
   console.log(`Served by: ${Object.entries(servedBy).map(([k, v]) => `${k} (${v} turns)`).join(", ")}`);
   console.log(
-    `Turns: ${summary.totalTurns}; tokens prompt/completion/reasoning: ${summary.totalPromptTokens}/${summary.totalCompletionTokens}/${summary.totalReasoningTokens}; cost: ${summary.totalCost.toFixed(6)}`
+    `Turns: ${summary.totalTurns}; tokens prompt/completion/reasoning: ${summary.totalPromptTokens}/${summary.totalCompletionTokens}/${summary.totalReasoningTokens}; cost billed: ${summary.totalCost.toFixed(6)}`
   );
+  const listCost = costAtListPrice(
+    { promptTokens: summary.totalPromptTokens, completionTokens: summary.totalCompletionTokens },
+    modelInfo.pricing ?? null
+  );
+  if (listCost !== null) console.log(`Cost at list price (shown on the site): ${listCost.toFixed(6)}`);
   if (summary.truncated > 0) {
     console.warn(`Warning: ${summary.truncated} answer(s) hit max_tokens=${maxTokens} before replying. Consider raising maxTokens.`);
   }

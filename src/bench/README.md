@@ -66,6 +66,14 @@ request errors is not saved as final until they succeed (set
 is refused if the harness code, `maxTokens`, effort, model, provider routing,
 temperature or `revealTheme` changed, so one run never mixes settings.
 
+### Cost
+
+Each run saves the model's standard per-token price from OpenRouter `/models`
+(`config.model.pricing`). The site shows cost as tokens x that price for every run, so
+runs routed to a discounted endpoint or billed through BYOK compare fairly; the amount
+actually billed stays in each turn's `usage.cost` and `summary.totalCost`. Runs without a
+saved price (e.g. Sakana) show the billed cost.
+
 ### Token budget
 
 `maxTokens` (default 32768 for reasoning models) caps reasoning + answer for each

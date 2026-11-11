@@ -77,6 +77,7 @@ type RunFile = {
     maxTokens?: number | null;
     reasoning?: { effort?: string | null } | null;
     revealTheme?: boolean;
+    model?: { pricing?: { prompt?: number; completion?: number } | null } | null;
   };
   summary?: {
     total?: number;
@@ -182,10 +183,28 @@ function toAttemptView(raw: RunAttempt): PuzzleAttemptView | null {
   };
 }
 
+/** Standard per-token price saved with the run, or null if the run has none (e.g. Sakana). */
+function listPricingOf(run: RunFile): { prompt: number; completion: number } | null {
+  const pricing = run?.config?.model?.pricing;
+  const prompt = pricing?.prompt;
+  const completion = pricing?.completion;
+  if (typeof prompt !== 'number' || typeof completion !== 'number') return null;
+  if (!Number.isFinite(prompt) || !Number.isFinite(completion) || prompt < 0 || completion < 0) return null;
+  return { prompt, completion };
+}
+
 function toModelView(run: RunFile): ModelView | null {
   const modelId = safeString(run?.modelId);
   if (!modelId) return null;
   const attempts = (run?.attempts ?? []).map(toAttemptView).filter((a): a is PuzzleAttemptView => Boolean(a));
+  // Price every run at the model's standard rate so runs on discounted endpoints compare fairly.
+  // Runs without a saved price keep the billed cost.
+  const pricing = listPricingOf(run);
+  if (pricing) {
+    for (const attempt of attempts) {
+      attempt.usage.cost = attempt.usage.promptTokens * pricing.prompt + attempt.usage.completionTokens * pricing.completion;
+    }
+  }
   const attemptsByPuzzleId: Record<string, PuzzleAttemptView> = {};
   const trackRollup = new Map<string, { correct: number; total: number }>();
   let correct = 0;
@@ -229,7 +248,7 @@ function toModelView(run: RunFile): ModelView | null {
       total: Math.max(0, Math.trunc(safeNumber(summary?.total, total))),
       correct: Math.max(0, Math.trunc(safeNumber(summary?.correctStrict, correct))),
       accuracy: safeNumber(summary?.accuracyStrict, accuracy),
-      totalCost: safeNumber(summary?.totalCost, totalCost),
+      totalCost: pricing ? totalCost : safeNumber(summary?.totalCost, totalCost),
       totalPromptTokens: Math.max(0, Math.trunc(safeNumber(summary?.totalPromptTokens, totalPromptTokens))),
       totalCompletionTokens: Math.max(0, Math.trunc(safeNumber(summary?.totalCompletionTokens, totalCompletionTokens))),
       totalReasoningTokens: Math.max(0, Math.trunc(safeNumber(summary?.totalReasoningTokens, totalReasoningTokens))),

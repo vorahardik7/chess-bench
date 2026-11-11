@@ -474,7 +474,37 @@
           ]
         },
         "model": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "pricing": {
+              "description": "Standard per-token USD price from OpenRouter /models; the site prices runs as tokens x this rate. Billed cost stays in usage.cost.",
+              "type": [
+                "object",
+                "null"
+              ],
+              "required": [
+                "prompt",
+                "completion"
+              ],
+              "properties": {
+                "prompt": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "completion": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "source": {
+                  "type": "string"
+                },
+                "fetchedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          }
         }
       }
     }
