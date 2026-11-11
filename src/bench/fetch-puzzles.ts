@@ -3,7 +3,7 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, existsSync, statSync } from "node:fs";
+import { createReadStream, mkdirSync, existsSync, statSync } from "node:fs";
 import { writeFile, rename } from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
@@ -24,11 +24,22 @@ const TRACKS = [
   { id: "hangingPiece", theme: "hangingPiece" },
 ];
 
+// v2 dataset: 800-1200 was dropped (every GPT-6.1 run scored 92-98% there) for 2000-2400.
+// Short puzzles above 2400 are too rare to fill every track (2 mate-in-1s in the whole dump).
 const RATING_BUCKETS = [
-  { id: "800-1200", min: 800, maxExclusive: 1200 },
   { id: "1200-1600", min: 1200, maxExclusive: 1600 },
-  { id: "1600-2000", min: 1600, maxExclusive: 2001 },
+  { id: "1600-2000", min: 1600, maxExclusive: 2000 },
+  { id: "2000-2400", min: 2000, maxExclusive: 2400 },
 ];
+
+// Only puzzles whose rating has settled and that players rate well. Low-popularity puzzles are
+// the ones with disputed or alternative solutions; a high rating deviation means the rating
+// (and so the bucket) isn't reliable yet.
+const QUALITY = {
+  maxRatingDeviation: 80,
+  minPlays: 1000,
+  minPopularity: 80,
+};
 
 function assertPositiveInt(name, value) {
   if (!Number.isInteger(value) || value <= 0) {
@@ -151,6 +162,12 @@ async function downloadPuzzleDump() {
   await rename(tmpPath, ZST_PATH);
   const bytes = statSync(ZST_PATH).size;
   console.log(`Saved ${path.relative(process.cwd(), ZST_PATH)} (${bytes.toLocaleString()} bytes).`);
+}
+
+async function sha256File(filePath) {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(filePath)) hash.update(chunk);
+  return hash.digest("hex");
 }
 
 function ratingBucketFor(rating) {
@@ -315,6 +332,13 @@ async function samplePuzzlesFromDump() {
     const bucket = ratingBucketFor(rating);
     if (!bucket) continue;
 
+    const ratingDeviation = parseIntOrNull(rdRaw);
+    const popularity = parseIntOrNull(popularityRaw);
+    const nbPlays = parseIntOrNull(playsRaw);
+    if (ratingDeviation === null || ratingDeviation > QUALITY.maxRatingDeviation) continue;
+    if (nbPlays === null || nbPlays < QUALITY.minPlays) continue;
+    if (popularity === null || popularity < QUALITY.minPopularity) continue;
+
     const moves = parseMoves(movesRaw);
     if (moves.length < 2) continue;
     const requiredPlies = moves.length - 1;
@@ -337,9 +361,9 @@ async function samplePuzzlesFromDump() {
       fen,
       moves,
       rating,
-      ratingDeviation: parseIntOrNull(rdRaw),
-      popularity: parseIntOrNull(popularityRaw),
-      nbPlays: parseIntOrNull(playsRaw),
+      ratingDeviation,
+      popularity,
+      nbPlays,
       themes,
       gameUrl,
       openingTags,
@@ -374,7 +398,7 @@ async function samplePuzzlesFromDump() {
   return { strata, lineNo, candidateCount };
 }
 
-function buildManifest(strata) {
+function buildManifest(strata, dumpSha256) {
   const puzzles = [];
   for (const track of TRACKS) {
     for (const bucket of RATING_BUCKETS) {
@@ -399,6 +423,8 @@ function buildManifest(strata) {
       url: SOURCE_URL,
       dumpPath: path.relative(process.cwd(), ZST_PATH),
       dumpSizeBytes: statSync(ZST_PATH).size,
+      dumpSha256: dumpSha256,
+      dumpModifiedAt: statSync(ZST_PATH).mtime.toISOString(),
     },
     config: {
       seed: String(SEED_INPUT),
@@ -413,6 +439,7 @@ function buildManifest(strata) {
         maxRequiredPlies: 3,
         requiresLengthThemeAnyOf: ["oneMove", "short"],
         excludesLengthThemeAnyOf: ["long", "veryLong"],
+        ...QUALITY,
       },
     },
     puzzles,
@@ -429,7 +456,8 @@ async function main() {
 
   console.log("Sampling puzzles...");
   const { strata, lineNo, candidateCount } = await samplePuzzlesFromDump();
-  const manifest = buildManifest(strata);
+  const dumpSha256 = await sha256File(ZST_PATH);
+  const manifest = buildManifest(strata, dumpSha256);
   await writeFile(OUTPUT_PATH, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
   console.log(`Done. Wrote ${manifest.puzzles.length} puzzles to ${path.relative(process.cwd(), OUTPUT_PATH)}.`);

@@ -19,7 +19,15 @@ pnpm run bench:fetch-puzzles
 
 Writes `src/bench/data/puzzles.json`: 150 Lichess puzzles, 10 per track
 (mate in 1, mate in 2, fork, pin, hanging piece) per rating bucket
-(800-1200, 1200-1600, 1600-2000), reservoir-sampled with a fixed seed.
+(1200-1600, 1600-2000, 2000-2400), reservoir-sampled with a fixed seed from the cached
+dump (its sha256 is recorded in the manifest).
+
+Only short puzzles (at most 3 plies, Lichess `oneMove`/`short` theme) whose rating has
+settled and that players rate well: rating deviation <= 80, played >= 1000 times,
+popularity >= 80. Low-popularity puzzles are the ones with disputed or alternative
+solutions. The first v2 dataset (`lichess-6df9cced576f`, 800-2000, no quality filter) was
+replaced because models scored 92-98% in its 800-1200 bucket; short puzzles above 2400 are
+too rare to fill every track.
 
 ## Run Benchmark
 
