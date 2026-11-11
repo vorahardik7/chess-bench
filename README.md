@@ -46,25 +46,25 @@ Open `http://localhost:3000` and use the in-app tabs (instant switch). Deep link
 
 ## How Scoring Works
 
-- Prompt asks for final answer as UCI move line.
-- `Accuracy(strict)` = exact expected UCI line match across all puzzles.
-- `Accuracy(parsed)` = exact match only among parsed outputs.
-- `Parse rate` = parseable outputs / total outputs.
-- Parser can recover:
-  - strict UCI
-  - loose UCI extraction
-  - SAN -> UCI conversion
+Harness v2 plays each puzzle like Lichess: the model gives one UCI move per turn, and
+after each correct move the opponent's reply from the stored solution is played and the
+model is asked again. A move counts if it is the solution move or gives checkmate.
 
-Notes:
-- If model supports reasoning, benchmark enables it automatically.
-- If a response has no valid final move line, benchmark does one short repair call asking for move-only output.
-- Interrupted runs auto-resume from an in-progress checkpoint for the same model + dataset.
+- `accuracyStrict` = puzzles solved / all puzzles (the leaderboard score).
+- `firstMoveAccuracy` = first move correct / all puzzles.
+- Answers are read as: the whole reply is one move, else the last line that is one move,
+  else a SAN move converted with the board, else the only UCI move in the text. Blank,
+  ambiguous, unreadable, illegal and truncated answers score as misses. No repair calls.
+- Interrupted runs auto-resume; requests that failed are retried before a run is saved.
 - Sakana runs leave `usage.cost` as `0`; add the billed cost manually afterward if needed.
+
+Full details: [`src/bench/README.md`](src/bench/README.md). v1 results (whole line in one
+reply) are kept at git tag `bench-v1` and are not comparable with v2.
 
 ## Outputs
 
 - Dataset: `src/bench/data/puzzles.json`
-- Runs: `src/bench/results/<model>/...benchmark.json`
-- Prompt template: `src/bench/prompt.ts`
+- Runs: `src/bench/results-v2/<model>/...benchmark.json`
+- Prompt: `src/bench/prompt.ts`; parsing and grading: `src/bench/scoring.ts`
 
 `BENCH_API_PROVIDER`, `BENCH_MODEL_ID`, `BENCH_VARIANT_ID`, `BENCH_API_MODEL_ID`, `BENCH_MODEL_NAME`, and `BENCH_REASONING_EFFORT` env vars can still be used as fallbacks for scripting.

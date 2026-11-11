@@ -614,7 +614,7 @@ export default function BenchmarksTab({
             </h2>
             <div className="mt-1 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
               {activeTab === 'leaderboard'
-                ? 'Every model, ranked by exact-line accuracy'
+                ? 'Every model, ranked by puzzles solved'
                 : 'What each point of accuracy costs. Up and to the left is better'}
             </div>
           </div>
@@ -872,7 +872,7 @@ export default function BenchmarksTab({
         )}
 
         <div className="mt-3 text-xs text-center" style={{ color: 'var(--text-tertiary)' }}>
-          {activeTab === 'leaderboard' && 'Accuracy counts only exact matches of the expected move line. Tactic columns show the percent solved, shaded by score.'}
+          {activeTab === 'leaderboard' && 'Accuracy is the share of puzzles solved, judged move by move as on Lichess. Tactic columns show the percent solved, shaded by score.'}
           {activeTab === 'value' &&
             `Each line joins one model’s reasoning-effort settings. Hover a line to highlight it, or click to pin it. Labels show each family’s best accuracy.${
               costInputs.some((m) => m.totalCost <= 0) ? ' Models without cost data are left out.' : ''

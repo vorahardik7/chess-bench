@@ -52,7 +52,7 @@ export function getTrackDescription(level: string): string {
     return "Mate on the first move.";
   }
   if (level === "mate2" || level === "mateIn2") {
-    return "Mate in two moves, with the reply forced.";
+    return "Mate in two moves, whatever the defence.";
   }
   if (level === "fork") {
     return "One move that attacks two pieces.";

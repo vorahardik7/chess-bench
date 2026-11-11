@@ -20,7 +20,7 @@ import { getLatestResults } from '../lib/results';
 import StructuredData from '../components/StructuredData';
 import MethodologyToc, { type TocItem } from '../components/MethodologyToc';
 import CopyButton from '../components/CopyButton';
-import { SYSTEM_PROMPT } from '../../bench/prompt';
+import { SYSTEM_PROMPT, buildFirstTurnPrompt } from '../../bench/prompt';
 import { parseGroupOf } from '../lib/parse-status';
 import {
   SITE_NAME,
@@ -56,16 +56,39 @@ const TRACK_COLOR: Record<string, string> = {
 };
 
 const PARSE_GROUPS = [
-  { id: 'ok', label: 'Clean move line', note: 'Just the moves, nothing else.', scored: true, color: 'var(--success)' },
-  { id: 'loose', label: 'Moves inside other text', note: 'Pulled out of a longer reply.', scored: true, color: 'color-mix(in srgb, var(--success) 60%, var(--surface))' },
+  { id: 'ok', label: 'Just the move', note: 'Every answer was a bare move, as asked.', scored: true, color: 'var(--success)' },
+  { id: 'last_line', label: 'Move on the last line', note: 'Some working first, then the move on its own line.', scored: true, color: 'color-mix(in srgb, var(--success) 60%, var(--surface))' },
   { id: 'san_converted', label: 'Converted from algebraic', note: 'Something like Qxf7#, translated using the board.', scored: true, color: 'var(--accent)' },
-  { id: 'repair', label: 'Asked again', note: 'Older runs sent one follow-up after a blank reply.', scored: true, color: 'color-mix(in srgb, var(--accent) 55%, var(--surface))' },
-  { id: 'invalid_count', label: 'Wrong length', note: 'Too many moves, or not enough.', scored: false, color: 'var(--danger)' },
-  { id: 'invalid_uci', label: 'Unreadable', note: 'Not a move the parser could use.', scored: false, color: 'color-mix(in srgb, var(--danger) 60%, var(--surface))' },
+  { id: 'loose', label: 'Move inside other text', note: 'The only move mentioned in a longer reply.', scored: true, color: 'color-mix(in srgb, var(--accent) 55%, var(--surface))' },
+  { id: 'illegal_move', label: 'Illegal move', note: 'A readable move that the position doesn’t allow.', scored: false, color: 'var(--danger)' },
+  { id: 'ambiguous', label: 'Several moves', note: 'More than one candidate, none given on its own line.', scored: false, color: 'color-mix(in srgb, var(--danger) 75%, var(--surface))' },
+  { id: 'invalid_format', label: 'Unreadable', note: 'No move the parser could find.', scored: false, color: 'color-mix(in srgb, var(--danger) 50%, var(--surface))' },
   { id: 'missing', label: 'Blank', note: 'Nothing came back.', scored: false, color: 'var(--text-tertiary)' },
   { id: 'truncated', label: 'Cut off', note: 'Hit the token limit before giving an answer.', scored: false, color: 'color-mix(in srgb, var(--warning) 55%, var(--surface))' },
-  { id: 'request_error', label: 'Request failed', note: 'The API errored on this puzzle.', scored: false, color: 'var(--warning)' },
+  { id: 'request_error', label: 'Request failed', note: 'The API still failed after retries.', scored: false, color: 'var(--warning)' },
 ] as const;
+
+/** Built with the runner's own prompt builder, so it can't drift from what models are sent. */
+const EXAMPLE_FIRST_TURN = buildFirstTurnPrompt({
+  trackLabel: 'Mate in 1',
+  taskDescription: 'Find the move that checkmates immediately.',
+  playerSide: 'White',
+  lastMoveUci: 'f8g8',
+  lastMoveSan: 'Kg8',
+  position: {
+    fen: '6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1',
+    sideToMove: 'White',
+    boardAscii: `8 . . . . . . k .
+7 . . . . . p p p
+6 . . . . . . . .
+5 . . . . . . . .
+4 . . . . . . . .
+3 . . . . . . . .
+2 . . . . . P P P
+1 . . . . R . K .
+  a b c d e f g h`,
+  },
+});
 
 const SECTIONS: TocItem[] = [
   { id: 'pipeline', index: '01', title: 'Pipeline' },
@@ -188,15 +211,18 @@ export default async function MethodologyPage() {
   };
   const commonMaxTokens = modeOf(configured.map((c) => c.maxTokens).filter((v): v is number => v !== null));
   const efforts = [...new Set(configured.map((c) => c.reasoningEffort).filter((v): v is string => v !== null))];
-  const zeroTemp = configured.filter((c) => c.temperature === 0).length;
+  const temps = [...new Set(configured.map((c) => c.temperature).filter((v): v is number => v !== null))];
+  const themeHidden = configured.filter((c) => c.revealTheme === false).length;
   const settings: [string, string, string][] = [
-    ['Temperature', '0', `where the model accepts it (${zeroTemp} of ${models.length} runs)`],
+    temps.length === 0
+      ? ['Temperature', 'Default', "not set; most reasoning models don't accept it"]
+      : ['Temperature', temps.join(', '), `set on ${configured.filter((c) => c.temperature !== null).length} of ${models.length} runs`],
     [
       'Max tokens',
       commonMaxTokens ? formatInteger(commonMaxTokens) : '—',
       maxTokenValues.length > 1
-        ? `most common; runs range ${formatInteger(maxTokenValues[0])}–${formatInteger(maxTokenValues[maxTokenValues.length - 1])}`
-        : 'for every run',
+        ? `per move, thinking included; most common, runs range ${formatInteger(maxTokenValues[0])}–${formatInteger(maxTokenValues[maxTokenValues.length - 1])}`
+        : 'per move, thinking included',
     ],
     [
       'Reasoning effort',
@@ -229,22 +255,22 @@ export default async function MethodologyPage() {
     {
       title: 'Pick',
       icon: Database,
-      body: `Drawn from the public Lichess puzzle database. A fixed seed takes ${uniformCellCount ?? 'the same number of'} puzzles per tactic per rating band, skipping anything longer than three plies.`,
+      body: `Drawn from the public Lichess puzzle database. A fixed seed takes ${uniformCellCount ?? 'the same number of'} puzzles per tactic per rating band, up to three plies long, and only puzzles played 1,000+ times that players rate well.`,
     },
     {
       title: 'Ask',
       icon: MessageSquareText,
-      body: 'The model gets the FEN, a text board, the side to move and how many plies to give. The answer must be UCI, like e2e4.',
+      body: "The model sees the position after the opponent's move: FEN, a text board, its side and the tactic. It answers with one move in UCI, like e2e4.",
     },
     {
       title: 'Read',
       icon: ScanText,
-      body: 'A bare move line is used as-is. Moves buried in prose are pulled out, and algebraic moves like Qxf7# are converted.',
+      body: 'A bare move is used as-is. Otherwise the move on the last line is taken, and algebraic moves like Qxf7# are converted.',
     },
     {
       title: 'Mark',
       icon: Crosshair,
-      body: 'Solved means the line matches Lichess exactly. A close answer, or another winning move, is still wrong.',
+      body: "Each move must be the Lichess move or give checkmate. If it is and the puzzle goes on, Lichess's reply is played and the model moves again.",
     },
   ];
 
@@ -280,8 +306,8 @@ export default async function MethodologyPage() {
               How ChessBench scores a model
             </h1>
             <p className="mt-4 max-w-2xl text-[16px] leading-7 text-pretty text-[var(--text-secondary)]">
-              Every model sees the same Lichess puzzles with the same prompt and gets one try. The moves have to match the
-              published solution exactly.
+              Every model sees the same Lichess puzzles with the same prompt and gets one try at each. It plays one move at a
+              time, as a person would on Lichess, and every move has to be the solution move or checkmate.
             </p>
 
             <dl className="mt-10 grid grid-cols-2 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] sm:grid-cols-5">
@@ -342,7 +368,7 @@ export default async function MethodologyPage() {
                     <div className="min-w-0 space-y-3 text-[12.5px]">
                       <div>
                         <p className="text-[var(--text-tertiary)]">Task</p>
-                        <p className="mt-0.5 text-[var(--text-primary)]">White to move, 1 move</p>
+                        <p className="mt-0.5 text-[var(--text-primary)]">You play White, mate in 1</p>
                       </div>
                       <div>
                         <p className="text-[var(--text-tertiary)]">Expected</p>
@@ -358,8 +384,9 @@ export default async function MethodologyPage() {
                     {(
                       [
                         ['e1e8', 'Used as-is', true],
-                        ['The rook goes e1e8', 'Moves pulled out', true],
                         ['Re8#', 'Converted to e1e8', true],
+                        ['The rook goes e1e8', 'Move pulled out', true],
+                        ['e1e8 or e1e7', 'Two moves, marked wrong', false],
                         ['(blank)', 'Marked wrong', false],
                       ] as const
                     ).map(([reply, outcome, ok]) => (
@@ -457,14 +484,15 @@ export default async function MethodologyPage() {
                 </div>
               </Panel>
               <p className="mt-3 text-[12.5px] leading-5 text-[var(--text-tertiary)]">
-                A ply is one side&apos;s move. Mate in two is three plies: yours, the forced reply, then mate.
+                A ply is one side&apos;s move. Mate in two is three plies: your move, the opponent&apos;s reply (played for the
+                model from the Lichess solution), then mate.
               </p>
             </Section>
 
             {/* 03 Prompt */}
             <Section
               id="prompt"
-              lede="One system prompt for every model. The puzzle follows it: FEN, a text board, who moves, the tactic, and how many moves to play."
+              lede="One system prompt for every model, then one message per move. Nothing that identifies the puzzle, like its Lichess id or rating, is sent."
             >
               <div className="grid gap-3 sm:grid-cols-3">
                 {settings.map(([label, value, note]) => (
@@ -484,12 +512,27 @@ export default async function MethodologyPage() {
                   {SYSTEM_PROMPT}
                 </pre>
               </Panel>
+              <Panel
+                className="mt-3"
+                title="First message of a puzzle"
+                aside={<span className="font-mono text-[11px] text-[var(--text-tertiary)]">example</span>}
+              >
+                <pre className="custom-scrollbar max-h-96 overflow-auto px-5 py-4 font-mono text-[12.5px] leading-6 whitespace-pre-wrap text-[var(--text-secondary)]">
+                  {EXAMPLE_FIRST_TURN}
+                </pre>
+              </Panel>
+              <p className="mt-3 text-[12.5px] leading-5 text-[var(--text-tertiary)]">
+                After a correct move, the next message in the same conversation starts &ldquo;Correct. The opponent replied
+                &hellip;&rdquo; and shows the new position the same way. Earlier thinking isn&apos;t sent back, so each message
+                carries the full position.
+                {themeHidden > 0 && ` ${themeHidden} of ${models.length} runs left out the tactic name.`}
+              </p>
             </Section>
 
             {/* 04 Replies */}
             <Section
               id="replies"
-              lede={`Plenty of answers ignore the format. If the moves are still in there, they're pulled out and scored. ${share(scoredTotal).toFixed(1)}% of replies in this run could be scored.`}
+              lede={`Some answers ignore the format. If the move is still clear, it's read and scored on the board; if not, the puzzle is wrong. ${share(scoredTotal).toFixed(1)}% of puzzle attempts across these runs could be read. Each attempt is counted by its first problem, or by why it ended.`}
             >
               <Panel>
                 <div className="px-5 pt-5 pb-5">
@@ -554,10 +597,10 @@ export default async function MethodologyPage() {
               <ul className="grid gap-3 sm:grid-cols-2">
                 {(
                   [
-                    [Crosshair, 'Exact line', "Has to match Lichess, including the opponent's forced replies on longer puzzles."],
-                    [Repeat1, 'One try', 'One request per puzzle. A blank reply or a failed request counts as wrong.'],
+                    [Crosshair, 'Move by move', "Each of the model's moves must be the Lichess move, or any move that gives checkmate. The opponent's replies come from Lichess; the model never has to guess them."],
+                    [Repeat1, 'One try', 'One answer per move, no second chances. A wrong, illegal, unreadable or blank answer ends the puzzle. API failures are retried, never scored.'],
                     [Percent, 'Accuracy', `Solved puzzles divided by ${puzzles.length}.${tacticsBalanced ? ' Every tactic has the same number of puzzles, so this is also the average of the tactic scores.' : ''}`],
-                    [Coins, 'Cost', 'Tokens and dollars as OpenRouter reported them, summed over the whole run.'],
+                    [Coins, 'Cost', 'Tokens and dollars as OpenRouter reported them, summed over every move of the run.'],
                   ] as const
                 ).map(([icon, title, body]) => (
                   <li key={title} className="flex gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
@@ -579,9 +622,13 @@ export default async function MethodologyPage() {
               >
                 <ul className="grid gap-x-8 gap-y-4 md:grid-cols-2">
                   {[
-                    ['Only one right answer', 'Only the Lichess line counts. Another move that also wins is marked wrong.'],
-                    ['Small gaps are noise', `One puzzle is worth about ${(100 / Math.max(1, puzzles.length)).toFixed(1)} points. Gaps smaller than that don't mean much.`],
-                    ['Single run', 'Each model was run once. A second run can score differently, even at temperature 0.'],
+                    ['One right move', 'Apart from checkmate, only the Lichess move counts, as on Lichess. Another move that also wins is marked wrong.'],
+                    ['Small gaps are noise', `One puzzle is worth about ${(100 / Math.max(1, puzzles.length)).toFixed(1)} points, and with ${puzzles.length} puzzles a score of 70% is only accurate to about ±${(196 * Math.sqrt((0.7 * 0.3) / Math.max(1, puzzles.length))).toFixed(0)} points. Treat close scores as ties.`],
+                    ['Single run', 'Each model was run once, with its provider’s default sampling. A second run can score differently.'],
+                    ...(themeHidden < models.length || models.length === 0
+                      ? [['Tactic is named', 'The prompt says which tactic to look for (mate in 2, fork…). Lichess’s rated puzzles don’t, so this is easier.']]
+                      : []),
+                    ['Rating range', `Puzzles are rated ${bands[0]?.split('-')[0] ?? '?'}–${bands[bands.length - 1]?.split('-')[1] ?? '?'}. Strong models may get close to the ceiling.`],
                     ['Text only', 'The board is sent as text. Models never see a picture of the position.'],
                   ].map(([title, body]) => (
                     <li key={title} className="flex gap-3">

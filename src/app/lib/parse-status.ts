@@ -1,46 +1,42 @@
 /**
- * Parse statuses written by the bench runner are composed: an optional `repair_`
- * (a follow-up was sent) and an optional `loose_` (moves pulled from prose), then
- * the outcome. `loose_invalid_count` is a failure, not a successful extraction.
+ * Attempt-level parse statuses written by the v2 bench runner (see src/bench/scoring.ts).
+ * Readable: `ok` (the reply is just the move), `last_line` (the last line holding one move),
+ * `san_converted` (an algebraic move converted with the board), `loose` (the only move in
+ * the text). Failures end the puzzle as a miss.
  */
 export type ParseGroup =
   | 'ok'
-  | 'loose'
+  | 'last_line'
   | 'san_converted'
-  | 'repair'
-  | 'invalid_count'
-  | 'invalid_uci'
+  | 'loose'
+  | 'illegal_move'
+  | 'ambiguous'
+  | 'invalid_format'
   | 'missing'
   | 'truncated'
   | 'request_error';
 
-const FAILURES = new Set<ParseGroup>(['invalid_count', 'invalid_uci', 'missing', 'truncated', 'request_error']);
+const READABLE = new Set<ParseGroup>(['ok', 'last_line', 'san_converted', 'loose']);
+const FAILURES = new Set<ParseGroup>(['illegal_move', 'ambiguous', 'invalid_format', 'missing', 'truncated', 'request_error']);
 
 export function parseGroupOf(status: string): ParseGroup {
-  let rest = status;
-  const repaired = rest.startsWith('repair_');
-  if (repaired) rest = rest.slice('repair_'.length);
-  const loose = rest.startsWith('loose_');
-  if (loose) rest = rest.slice('loose_'.length);
-
-  if (FAILURES.has(rest as ParseGroup)) return rest as ParseGroup;
-  if (repaired) return 'repair';
-  if (loose) return 'loose';
-  if (rest === 'ok' || rest === 'san_converted') return rest;
-  return 'invalid_uci';
+  const group = status as ParseGroup;
+  if (READABLE.has(group) || FAILURES.has(group)) return group;
+  return 'invalid_format';
 }
 
 export function isScoredGroup(group: ParseGroup): boolean {
-  return !FAILURES.has(group);
+  return READABLE.has(group);
 }
 
 const LABELS: Record<ParseGroup, string> = {
   ok: 'Clean',
-  loose: 'Pulled from text',
+  last_line: 'Move on last line',
   san_converted: 'Converted from SAN',
-  repair: 'Asked again',
-  invalid_count: 'Wrong length',
-  invalid_uci: 'Unreadable',
+  loose: 'Pulled from text',
+  illegal_move: 'Illegal move',
+  ambiguous: 'Several moves',
+  invalid_format: 'Unreadable',
   missing: 'Blank reply',
   truncated: 'Cut off',
   request_error: 'Request failed',

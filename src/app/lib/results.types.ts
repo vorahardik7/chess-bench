@@ -67,6 +67,8 @@ export type ModelView = {
     temperature: number | null;
     maxTokens: number | null;
     reasoningEffort: string | null;
+    /** Whether the prompt named the tactic ("Mate in 2", "Fork"). */
+    revealTheme: boolean | null;
   };
   attemptsByPuzzleId: Record<string, PuzzleAttemptView>;
 };

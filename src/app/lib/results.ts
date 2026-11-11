@@ -76,6 +76,7 @@ type RunFile = {
     temperature?: number | null;
     maxTokens?: number | null;
     reasoning?: { effort?: string | null } | null;
+    revealTheme?: boolean;
   };
   summary?: {
     total?: number;
@@ -237,6 +238,7 @@ function toModelView(run: RunFile): ModelView | null {
       temperature: typeof run.config?.temperature === 'number' ? run.config.temperature : null,
       maxTokens: typeof run.config?.maxTokens === 'number' ? run.config.maxTokens : null,
       reasoningEffort: typeof run.config?.reasoning?.effort === 'string' ? run.config.reasoning.effort : null,
+      revealTheme: typeof run.config?.revealTheme === 'boolean' ? run.config.revealTheme : null,
     },
     marks: '',
     attemptsByPuzzleId,
