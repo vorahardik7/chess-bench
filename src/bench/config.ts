@@ -63,12 +63,12 @@ export type BenchmarkConfig = {
 
 const config: BenchmarkConfig = {
   apiProvider: "openrouter",
-  modelId: "openai/gpt-6-luna",
+  modelId: "google/gemini-3.8-flash",
   variantId: "high",
-  modelName: "GPT-6 Luna [high]",
+  modelName: "Gemini 3.8 Flash [high]",
   reasoningEffort: "high",
   requestTimeoutMs: 300000,
-  providerOrder: ["openai/flex"],
+  providerOrder: ["google-vertex/global"],
 };
 
 export default config;
