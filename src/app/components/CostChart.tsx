@@ -9,7 +9,7 @@ import { getModelLogoClass, getModelLogoPath, getModelProvider } from './utils';
  * enter/leave races), and a click or tap pins a family so touch users get the same view.
  */
 
-export type CostInput = { id: string; name: string; score: number; totalCost: number; total: number };
+export type CostInput = { id: string; name: string; score: number; totalCost: number };
 
 type ValuePoint = {
   id: string;
@@ -17,7 +17,6 @@ type ValuePoint = {
   familyKey: string;
   effort: string | null;
   cost: number;
-  totalCost: number;
   score: number;
 };
 
@@ -119,7 +118,23 @@ function linearCostTicks(max: number): number[] {
 
 function formatCost(v: number) {
   if (v === 0) return '$0';
+  if (v >= 0.01 && v < 1) return `$${v.toFixed(2)}`;
   return `$${Number(v.toPrecision(2))}`;
+}
+
+/** A value tag pinned to an axis, filled with the series color. Width is estimated from the mono glyph width. */
+function AxisTag({ x, y, text, color, anchor }: { x: number; y: number; text: string; color: string; anchor: 'end' | 'middle' }) {
+  const width = text.length * 7 + 11;
+  // Kept inside the SVG so a wide value never clips at the left edge.
+  const left = Math.max(1, anchor === 'end' ? x - width : x - width / 2);
+  return (
+    <g className="value-axis-tag" style={{ color }}>
+      <rect x={left} y={y - 10.5} width={width} height={21} rx={5} fill="currentColor" />
+      <text x={left + width / 2} y={y} textAnchor="middle" dominantBaseline="central" fontSize={11.5}>
+        {text}
+      </text>
+    </g>
+  );
 }
 
 // Push overlapping labels apart while keeping each as close to its line end as possible.
@@ -222,15 +237,14 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
 
   const data = useMemo(() => {
     const points: ValuePoint[] = models.flatMap((m) => {
-      if (m.totalCost <= 0 || m.total <= 0) return [];
+      if (m.totalCost <= 0) return [];
       const family = modelFamily(m);
       return [{
         id: m.id,
         name: m.name,
         familyKey: family.key,
         effort: family.effort,
-        cost: m.totalCost / m.total,
-        totalCost: m.totalCost,
+        cost: m.totalCost,
         score: m.score,
       }];
     });
@@ -289,7 +303,7 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
   const pinnedKey = pinned && data.familiesByKey.has(pinned) ? pinned : null;
   const activeKey = hovered ?? pinnedKey;
   const sideLegend = size.width >= SIDE_LEGEND_MIN_WIDTH;
-  const margin = { top: 14, right: sideLegend ? LABEL_COLUMN : 18, bottom: 54, left: 54 };
+  const margin = { top: 14, right: sideLegend ? LABEL_COLUMN : 18, bottom: 72, left: 54 };
   const plot = {
     x: margin.left,
     y: margin.top,
@@ -325,7 +339,7 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
   };
   const togglePin = (key: string | null) => setPinned((current) => (key === null || current === key ? null : key));
 
-  // Drop tick labels that would collide on narrow plots (roughly 52px per "$0.005").
+  // Drop tick labels that would collide on narrow plots (roughly 52px per "$0.50").
   const visibleXTicks = data.xTicks
     .filter((t) => {
       const x = xScale(t);
@@ -377,7 +391,7 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
     <div>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
         <p className="text-[13px] font-medium text-[var(--text-secondary)]">
-          Accuracy <span className="text-[var(--text-tertiary)]">vs cost per puzzle</span>
+          Accuracy <span className="text-[var(--text-tertiary)]">vs total run cost</span>
         </p>
         <ChartControls showPareto={showPareto} onPareto={setShowPareto} scale={scale} onScale={setScale} />
       </div>
@@ -389,7 +403,7 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
             height={size.height}
             className="block touch-manipulation"
             role="img"
-            aria-label={`Accuracy against cost per puzzle for ${data.families.length} model families`}
+            aria-label={`Accuracy against total run cost for ${data.families.length} model families`}
             onPointerMove={onPointerMove}
             onPointerDown={onPointerMove}
             onClick={(e) => togglePin((e.target as Element).closest('[data-family]')?.getAttribute('data-family') ?? null)}
@@ -411,20 +425,46 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
               return (
                 <g key={`x${t}`}>
                   <line x1={x} x2={x} y1={plot.y + plot.h} y2={plot.y + plot.h + 5} stroke="var(--chart-axis)" />
-                  <text x={x} y={plot.y + plot.h + 20} textAnchor="middle" className="value-tick" fontSize={12}>
+                  <text x={x} y={plot.y + plot.h + 24} textAnchor="middle" className="value-tick" fontSize={12}>
                     {formatCost(t)}
                   </text>
                 </g>
               );
             })}
-            <text x={plot.x + plot.w / 2} y={plot.y + plot.h + 46} textAnchor="middle" className="value-axis-title">
-              Cost per puzzle (USD{scale === 'log' ? ', log scale' : ''})
+            <text x={plot.x + plot.w / 2} y={plot.y + plot.h + 58} textAnchor="middle" className="value-axis-title">
+              Total run cost (USD{scale === 'log' ? ', log scale' : ''})
             </text>
             <text x={plot.x + 12} y={plot.y + 16} className="value-better">
               ↖ Better
             </text>
 
             {showPareto && data.frontier.length > 1 && <path d={linePath(data.frontier)} className="frontier-line" />}
+
+            {/* Crosshair: guides from the hovered point to both axes, under the series so the dot stays on top. */}
+            {hoverPoint && hoverFamily && (
+              <g key={`guides-${hoverPoint.id}`} className="value-crosshair" style={{ color: hoverFamily.color }} pointerEvents="none">
+                <line
+                  x1={xScale(hoverPoint.cost)}
+                  x2={xScale(hoverPoint.cost)}
+                  y1={yScale(hoverPoint.score)}
+                  y2={plot.y + plot.h}
+                  stroke="currentColor"
+                  strokeOpacity={0.55}
+                  strokeWidth={1.25}
+                  strokeDasharray="3 4"
+                />
+                <line
+                  x1={plot.x}
+                  x2={xScale(hoverPoint.cost)}
+                  y1={yScale(hoverPoint.score)}
+                  y2={yScale(hoverPoint.score)}
+                  stroke="currentColor"
+                  strokeOpacity={0.55}
+                  strokeWidth={1.25}
+                  strokeDasharray="3 4"
+                />
+              </g>
+            )}
 
             {ordered.map((family) => {
               const active = activeKey === family.key;
@@ -533,6 +573,26 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
                 </g>
               );
             })}
+
+            {/* Axis value tags for the hovered point, on top of the tick labels they cover. */}
+            {hoverPoint && hoverFamily && (
+              <g key={`tags-${hoverPoint.id}`} className="value-crosshair" pointerEvents="none">
+                <AxisTag
+                  x={plot.x - 4}
+                  y={yScale(hoverPoint.score)}
+                  text={`${hoverPoint.score.toFixed(1)}%`}
+                  color={hoverFamily.color}
+                  anchor="end"
+                />
+                <AxisTag
+                  x={xScale(hoverPoint.cost)}
+                  y={plot.y + plot.h + 20}
+                  text={`$${hoverPoint.cost.toFixed(2)}`}
+                  color={hoverFamily.color}
+                  anchor="middle"
+                />
+              </g>
+            )}
           </svg>
         )}
 
@@ -560,8 +620,7 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
             <dl className="grid grid-cols-[1fr_auto] gap-x-6 gap-y-1 border-t border-[var(--border-subtle)] px-3.5 pt-2.5 pb-3 text-[12.5px]">
               {[
                 ['Accuracy', `${hoverPoint.score.toFixed(1)}%`],
-                ['Cost per puzzle', `$${hoverPoint.cost.toFixed(4)}`],
-                ['Full run', `$${hoverPoint.totalCost.toFixed(2)}`],
+                ['Total cost', `$${hoverPoint.cost.toFixed(2)}`],
               ].map(([label, value]) => (
                 <div key={label} className="contents">
                   <dt className="text-[var(--text-tertiary)]">{label}</dt>

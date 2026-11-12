@@ -464,7 +464,7 @@ export default function BenchmarksTab({
     () =>
       modelsByScore.flatMap((m) => {
         const summary = results.models.find((r) => r.id === m.id)?.summary;
-        return summary ? [{ id: m.id, name: m.name, score: m.score, totalCost: summary.totalCost, total: summary.total }] : [];
+        return summary ? [{ id: m.id, name: m.name, score: m.score, totalCost: summary.totalCost }] : [];
       }),
     [modelsByScore, results.models]
   );
@@ -871,13 +871,16 @@ export default function BenchmarksTab({
           />
         )}
 
-        <div className="mt-3 text-xs text-center" style={{ color: 'var(--text-tertiary)' }}>
-          {activeTab === 'leaderboard' && 'Accuracy is the share of puzzles solved, judged move by move as on Lichess. Tactic columns show the percent solved, shaded by score.'}
-          {activeTab === 'value' &&
-            `Each line joins one model’s reasoning-effort settings. Hover a line to highlight it, or click to pin it. Labels show each family’s best accuracy.${
-              costInputs.some((m) => m.totalCost <= 0) ? ' Models without cost data are left out.' : ''
-            }`}
-        </div>
+        {activeTab === 'leaderboard' && (
+          <div className="mt-3 text-xs text-center" style={{ color: 'var(--text-tertiary)' }}>
+            Accuracy is the share of puzzles solved, judged move by move as on Lichess. Tactic columns show the percent solved, shaded by score.
+          </div>
+        )}
+        {activeTab === 'value' && costInputs.some((m) => m.totalCost <= 0) && (
+          <div className="mt-3 text-xs text-center" style={{ color: 'var(--text-tertiary)' }}>
+            Models without cost data are left out.
+          </div>
+        )}
       </section>
     </div>
   );

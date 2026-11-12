@@ -139,6 +139,29 @@ input[data-seamless]:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+.value-axis-tag text {
+  fill: var(--surface);
+  font-family: var(--font-app-mono), var(--font-mono-fallback);
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.value-crosshair {
+  animation: crosshair-in 140ms ease-out both;
+}
+
+@keyframes crosshair-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .value-crosshair {
+    animation: none;
+  }
+}
+
 .value-tooltip {
   background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
   border: 1px solid var(--border);
