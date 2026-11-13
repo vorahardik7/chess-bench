@@ -100,7 +100,7 @@ input[data-seamless]:focus-visible {
   filter: var(--logo-filter);
 }
 
-/* Cost vs accuracy chart (CostChart.tsx). Family colors are set inline and drawn through currentColor. */
+/* Efficiency chart (CostChart.tsx). Family colors are set inline and drawn through currentColor. */
 .value-chart .value-tick {
   fill: var(--text-tertiary);
   font-family: var(--font-app-mono), var(--font-mono-fallback);

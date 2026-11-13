@@ -55,6 +55,10 @@ export type ModelView = {
     totalPromptTokens: number;
     totalCompletionTokens: number;
     totalReasoningTokens: number;
+    /** Mean wall-clock time per puzzle, all turns included; 0 when no attempt recorded a time. */
+    avgLatencyMs: number;
+    /** Mean output tokens (reasoning included) per puzzle. */
+    avgCompletionTokens: number;
   };
   /**
    * One character per puzzle, in `puzzles` order.

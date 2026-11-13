@@ -212,8 +212,14 @@ function toModelView(run: RunFile): ModelView | null {
   let totalCompletionTokens = 0;
   let totalReasoningTokens = 0;
   let totalCost = 0;
+  let totalLatencyMs = 0;
+  let timedAttempts = 0;
 
   for (const attempt of attempts) {
+    if (attempt.latencyMs > 0) {
+      totalLatencyMs += attempt.latencyMs;
+      timedAttempts += 1;
+    }
     attemptsByPuzzleId[attempt.puzzleId] = attempt;
     if (attempt.correctStrict) correct += 1;
     totalPromptTokens += attempt.usage.promptTokens;
@@ -252,6 +258,8 @@ function toModelView(run: RunFile): ModelView | null {
       totalPromptTokens: Math.max(0, Math.trunc(safeNumber(summary?.totalPromptTokens, totalPromptTokens))),
       totalCompletionTokens: Math.max(0, Math.trunc(safeNumber(summary?.totalCompletionTokens, totalCompletionTokens))),
       totalReasoningTokens: Math.max(0, Math.trunc(safeNumber(summary?.totalReasoningTokens, totalReasoningTokens))),
+      avgLatencyMs: timedAttempts > 0 ? totalLatencyMs / timedAttempts : 0,
+      avgCompletionTokens: total > 0 ? totalCompletionTokens / total : 0,
     },
     runConfig: {
       temperature: typeof run.config?.temperature === 'number' ? run.config.temperature : null,

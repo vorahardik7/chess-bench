@@ -4,20 +4,31 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { getModelLogoClass, getModelLogoPath, getModelProvider } from './utils';
 
 /**
- * Cost vs accuracy, drawn as plain SVG so hover is predictable: every line has a wide
+ * Accuracy vs cost, time or tokens, drawn as plain SVG so hover is predictable: every line has a wide
  * invisible hit stroke, hover is resolved from the element under the pointer (no
  * enter/leave races), and a click or tap pins a family so touch users get the same view.
  */
 
-export type CostInput = { id: string; name: string; score: number; totalCost: number };
+export type CostInput = {
+  id: string;
+  name: string;
+  score: number;
+  totalCost: number;
+  avgLatencyMs: number;
+  avgCompletionTokens: number;
+};
+
+export type ValueMetric = 'cost' | 'time' | 'tokens';
 
 type ValuePoint = {
   id: string;
   name: string;
   familyKey: string;
   effort: string | null;
-  cost: number;
+  /** The value on the X axis for the chosen metric. */
+  x: number;
   score: number;
+  input: CostInput;
 };
 
 type ValueFamily = {
@@ -89,7 +100,7 @@ export function defaultValueSelection(models: { id: string; name: string; score:
 
 // Points no cheaper model beats on accuracy, in cost order.
 function paretoFrontier(points: ValuePoint[]): ValuePoint[] {
-  const byCost = [...points].sort((a, b) => a.cost - b.cost || b.score - a.score);
+  const byCost = [...points].sort((a, b) => a.x - b.x || b.score - a.score);
   let best = -Infinity;
   return byCost.filter((p) => {
     if (p.score <= best) return false;
@@ -99,14 +110,19 @@ function paretoFrontier(points: ValuePoint[]): ValuePoint[] {
 }
 
 function logCostTicks(min: number, max: number): number[] {
-  const out: number[] = [];
-  for (let exp = Math.floor(Math.log10(min)); exp <= Math.ceil(Math.log10(max)); exp += 1) {
-    for (const m of [1, 2, 5]) {
-      const v = m * 10 ** exp;
-      if (v >= min && v <= max) out.push(v);
+  const ticksWith = (mantissas: number[]) => {
+    const out: number[] = [];
+    for (let exp = Math.floor(Math.log10(min)); exp <= Math.ceil(Math.log10(max)); exp += 1) {
+      for (const m of mantissas) {
+        const v = Number((m * 10 ** exp).toPrecision(6));
+        if (v >= min && v <= max) out.push(v);
+      }
     }
-  }
-  return out;
+    return out;
+  };
+  // A narrow range (e.g. 10s to 70s) gets only two or three 1-2-5 ticks; fill it in.
+  const coarse = ticksWith([1, 2, 5]);
+  return coarse.length >= 4 ? coarse : ticksWith([1, 1.5, 2, 3, 5, 7]);
 }
 
 function linearCostTicks(max: number): number[] {
@@ -121,6 +137,61 @@ function formatCost(v: number) {
   if (v >= 0.01 && v < 1) return `$${v.toFixed(2)}`;
   return `$${Number(v.toPrecision(2))}`;
 }
+
+function formatSeconds(v: number) {
+  if (v === 0) return '0s';
+  if (v < 60) return `${Number(v.toPrecision(2))}s`;
+  const m = Math.floor(v / 60);
+  const sec = Math.round(v - m * 60);
+  return sec === 0 ? `${m}m` : `${m}m ${sec}s`;
+}
+
+function formatSecondsExact(v: number) {
+  if (v < 60) return `${v.toFixed(v < 10 ? 2 : 1)}s`;
+  const m = Math.floor(v / 60);
+  return `${m}m ${String(Math.round(v - m * 60)).padStart(2, '0')}s`;
+}
+
+function formatTokens(v: number) {
+  if (v === 0) return '0';
+  if (v < 1000) return String(Number(v.toPrecision(2)));
+  return `${Number((v / 1000).toPrecision(2))}k`;
+}
+
+function formatTokensExact(v: number) {
+  return v < 1000 ? String(Math.round(v)) : `${(v / 1000).toFixed(v < 10_000 ? 2 : 1)}k`;
+}
+
+// Every metric reads "lower is cheaper", so the frontier and "Better" corner work the same for all three.
+const METRICS: Record<
+  ValueMetric,
+  { label: string; axis: string; value: (m: CostInput) => number; tick: (v: number) => string; exact: (v: number) => string; missing: string }
+> = {
+  cost: {
+    label: 'Cost',
+    axis: 'Total run cost (USD',
+    value: (m) => m.totalCost,
+    tick: formatCost,
+    exact: (v) => `$${v.toFixed(2)}`,
+    missing: 'cost',
+  },
+  time: {
+    label: 'Time',
+    axis: 'Average time per puzzle (all turns',
+    value: (m) => m.avgLatencyMs / 1000,
+    tick: formatSeconds,
+    exact: formatSecondsExact,
+    missing: 'timing',
+  },
+  tokens: {
+    label: 'Tokens',
+    axis: 'Average output tokens per puzzle (reasoning included',
+    value: (m) => m.avgCompletionTokens,
+    tick: formatTokens,
+    exact: formatTokensExact,
+    missing: 'token',
+  },
+};
 
 /** A value tag pinned to an axis, filled with the series color. Width is estimated from the mono glyph width. */
 function AxisTag({ x, y, text, color, anchor }: { x: number; y: number; text: string; color: string; anchor: 'end' | 'middle' }) {
@@ -227,7 +298,39 @@ function ChartControls({
   );
 }
 
+function MetricSwitch({ metric, onMetric }: { metric: ValueMetric; onMetric: (v: ValueMetric) => void }) {
+  return (
+    <div className="flex items-center gap-2.5">
+      <span className="text-[13px] font-medium text-[var(--text-secondary)]">Accuracy vs</span>
+      <div
+        role="group"
+        aria-label="Compare accuracy against"
+        className="inline-flex h-8 items-center rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] p-0.5"
+      >
+        {(Object.keys(METRICS) as ValueMetric[]).map((option) => (
+          <button
+            key={option}
+            type="button"
+            onClick={() => onMetric(option)}
+            aria-pressed={metric === option}
+            className="h-full rounded-md px-3 text-[12.5px] font-medium transition-colors hover:text-[var(--text-primary)]"
+            style={{
+              background: metric === option ? 'var(--accent-light)' : 'transparent',
+              color: metric === option ? 'var(--accent)' : 'var(--text-tertiary)',
+              boxShadow: metric === option ? 'inset 0 0 0 1px var(--accent-border)' : undefined,
+            }}
+          >
+            {METRICS[option].label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function CostChart({ models, onReset }: { models: CostInput[]; onReset?: () => void }) {
+  const [metric, setMetric] = useState<ValueMetric>('cost');
+  const config = METRICS[metric];
   const [scale, setScale] = useState<CostScale>('log');
   const [showPareto, setShowPareto] = useState(false);
   const [hovered, setHovered] = useState<string | null>(null);
@@ -237,15 +340,17 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
 
   const data = useMemo(() => {
     const points: ValuePoint[] = models.flatMap((m) => {
-      if (m.totalCost <= 0) return [];
+      const x = METRICS[metric].value(m);
+      if (!(x > 0)) return [];
       const family = modelFamily(m);
       return [{
         id: m.id,
         name: m.name,
         familyKey: family.key,
         effort: family.effort,
-        cost: m.totalCost,
+        x,
         score: m.score,
+        input: m,
       }];
     });
 
@@ -268,13 +373,13 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
     const families = [...byFamily.values()].sort((a, b) => b.best - a.best);
     const shadeByLab = new Map<string, number>();
     for (const family of families) {
-      family.points.sort((a, b) => a.cost - b.cost);
+      family.points.sort((a, b) => a.x - b.x);
       const shade = shadeByLab.get(family.provider) ?? 0;
       shadeByLab.set(family.provider, shade + 1);
       family.color = familyColor(family.provider, shade);
     }
 
-    const costs = points.map((p) => p.cost);
+    const costs = points.map((p) => p.x);
     const scores = points.map((p) => p.score);
     const minCost = costs.length ? Math.min(...costs) : 0.001;
     const maxCost = costs.length ? Math.max(...costs) : 0.1;
@@ -297,7 +402,7 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
       yDomain: [yMin, yMax] as [number, number],
       yTicks: Array.from({ length: Math.round((yMax - yMin) / yStep) + 1 }, (_, i) => yMin + i * yStep),
     };
-  }, [models, scale]);
+  }, [models, scale, metric]);
 
   // A pinned family that was filtered out shouldn't keep the rest dimmed.
   const pinnedKey = pinned && data.familiesByKey.has(pinned) ? pinned : null;
@@ -322,7 +427,7 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
   };
   const yScale = (v: number) => plot.y + plot.h - ((v - y0) / (y1 - y0 || 1)) * plot.h;
   const linePath = (pts: ValuePoint[]) =>
-    pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xScale(p.cost).toFixed(1)} ${yScale(p.score).toFixed(1)}`).join(' ');
+    pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xScale(p.x).toFixed(1)} ${yScale(p.score).toFixed(1)}`).join(' ');
 
   // Resolve hover from whatever is under the pointer, so moving between a line, its
   // points and its label never flickers through an empty state.
@@ -362,7 +467,7 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
     ? spreadLabels(
         data.families.map((family) => {
           const end = family.points[family.points.length - 1];
-          return { family, x: xScale(end.cost), anchorY: yScale(end.score), y: yScale(end.score) };
+          return { family, x: xScale(end.x), anchorY: yScale(end.score), y: yScale(end.score) };
         }),
         plot.y + 10,
         plot.y + plot.h - 4
@@ -370,10 +475,13 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
     : [];
   const labelX = plot.x + plot.w + 30;
 
+  const missingCount = models.length - data.points.length;
+
   if (data.points.length === 0) {
     return (
       <div className="flex h-[clamp(320px,calc(100dvh-26rem),600px)] flex-col items-center justify-center gap-3 text-sm text-[var(--text-tertiary)]">
-        {models.length === 0 ? 'No models selected.' : 'None of the selected models have cost data.'}
+        {models.length > 0 && <MetricSwitch metric={metric} onMetric={setMetric} />}
+        {models.length === 0 ? 'No models selected.' : `None of the selected models have ${config.missing} data.`}
         {onReset && (
           <button
             type="button"
@@ -390,9 +498,7 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
-        <p className="text-[13px] font-medium text-[var(--text-secondary)]">
-          Accuracy <span className="text-[var(--text-tertiary)]">vs total run cost</span>
-        </p>
+        <MetricSwitch metric={metric} onMetric={setMetric} />
         <ChartControls showPareto={showPareto} onPareto={setShowPareto} scale={scale} onScale={setScale} />
       </div>
 
@@ -403,7 +509,7 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
             height={size.height}
             className="block touch-manipulation"
             role="img"
-            aria-label={`Accuracy against total run cost for ${data.families.length} model families`}
+            aria-label={`Accuracy against ${config.axis.split(' (')[0].toLowerCase()} for ${data.families.length} model families`}
             onPointerMove={onPointerMove}
             onPointerDown={onPointerMove}
             onClick={(e) => togglePin((e.target as Element).closest('[data-family]')?.getAttribute('data-family') ?? null)}
@@ -426,13 +532,13 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
                 <g key={`x${t}`}>
                   <line x1={x} x2={x} y1={plot.y + plot.h} y2={plot.y + plot.h + 5} stroke="var(--chart-axis)" />
                   <text x={x} y={plot.y + plot.h + 24} textAnchor="middle" className="value-tick" fontSize={12}>
-                    {formatCost(t)}
+                    {config.tick(t)}
                   </text>
                 </g>
               );
             })}
             <text x={plot.x + plot.w / 2} y={plot.y + plot.h + 58} textAnchor="middle" className="value-axis-title">
-              Total run cost (USD{scale === 'log' ? ', log scale' : ''})
+              {config.axis}{scale === 'log' ? ', log scale' : ''})
             </text>
             <text x={plot.x + 12} y={plot.y + 16} className="value-better">
               ↖ Better
@@ -444,8 +550,8 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
             {hoverPoint && hoverFamily && (
               <g key={`guides-${hoverPoint.id}`} className="value-crosshair" style={{ color: hoverFamily.color }} pointerEvents="none">
                 <line
-                  x1={xScale(hoverPoint.cost)}
-                  x2={xScale(hoverPoint.cost)}
+                  x1={xScale(hoverPoint.x)}
+                  x2={xScale(hoverPoint.x)}
                   y1={yScale(hoverPoint.score)}
                   y2={plot.y + plot.h}
                   stroke="currentColor"
@@ -455,7 +561,7 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
                 />
                 <line
                   x1={plot.x}
-                  x2={xScale(hoverPoint.cost)}
+                  x2={xScale(hoverPoint.x)}
                   y1={yScale(hoverPoint.score)}
                   y2={yScale(hoverPoint.score)}
                   stroke="currentColor"
@@ -486,11 +592,11 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
                     </>
                   )}
                   {family.points.map((p, i) => {
-                    const cx = xScale(p.cost);
+                    const cx = xScale(p.x);
                     const cy = yScale(p.score);
                     // Effort labels go above; flip one below when a sibling point sits right on top of it.
                     const crowded = family.points.some(
-                      (q, j) => j < i && Math.hypot(xScale(q.cost) - cx, yScale(q.score) - cy) < 30
+                      (q, j) => j < i && Math.hypot(xScale(q.x) - cx, yScale(q.score) - cy) < 30
                     );
                     const isEnd = p.id === endId;
                     const r = (isEnd ? 5 : 4) + (active ? 1 : 0);
@@ -510,6 +616,15 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
                 </g>
               );
             })}
+
+            {/* Point hit targets above every line, so a point crossed by another family's line stays hoverable. */}
+            <g fill="transparent">
+              {data.points.map((p) => (
+                <g key={`hit-${p.id}`} data-family={p.familyKey} className="cursor-pointer">
+                  <circle data-point={p.id} cx={xScale(p.x)} cy={yScale(p.score)} r={10} />
+                </g>
+              ))}
+            </g>
 
             {/* Right-hand labels, one per family; hover or focus highlights it, click pins it. */}
             {labels.map(({ family, x, anchorY, y }) => {
@@ -585,9 +700,9 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
                   anchor="end"
                 />
                 <AxisTag
-                  x={xScale(hoverPoint.cost)}
+                  x={xScale(hoverPoint.x)}
                   y={plot.y + plot.h + 20}
-                  text={`$${hoverPoint.cost.toFixed(2)}`}
+                  text={config.exact(hoverPoint.x)}
                   color={hoverFamily.color}
                   anchor="middle"
                 />
@@ -600,9 +715,9 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
           <div
             className="value-tooltip pointer-events-none absolute z-20 min-w-[210px] rounded-xl text-sm"
             style={{
-              left: xScale(hoverPoint.cost),
+              left: xScale(hoverPoint.x),
               top: yScale(hoverPoint.score),
-              transform: `translate(${xScale(hoverPoint.cost) > size.width - 260 ? 'calc(-100% - 16px)' : '16px'}, ${
+              transform: `translate(${xScale(hoverPoint.x) > size.width - 260 ? 'calc(-100% - 16px)' : '16px'}, ${
                 yScale(hoverPoint.score) > size.height - 130 ? 'calc(-100% - 8px)' : '-50%'
               })`,
               color: hoverFamily.color,
@@ -619,18 +734,28 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
             </div>
             <dl className="grid grid-cols-[1fr_auto] gap-x-6 gap-y-1 border-t border-[var(--border-subtle)] px-3.5 pt-2.5 pb-3 text-[12.5px]">
               {[
-                ['Accuracy', `${hoverPoint.score.toFixed(1)}%`],
-                ['Total cost', `$${hoverPoint.cost.toFixed(2)}`],
-              ].map(([label, value]) => (
-                <div key={label} className="contents">
-                  <dt className="text-[var(--text-tertiary)]">{label}</dt>
-                  <dd className="text-right font-mono font-medium tabular-nums text-[var(--text-primary)]">{value}</dd>
+                ['Accuracy', `${hoverPoint.score.toFixed(1)}%`, false],
+                ['Total cost', hoverPoint.input.totalCost > 0 ? `$${hoverPoint.input.totalCost.toFixed(2)}` : '—', metric === 'cost'],
+                ['Time / puzzle', hoverPoint.input.avgLatencyMs > 0 ? formatSecondsExact(hoverPoint.input.avgLatencyMs / 1000) : '—', metric === 'time'],
+                ['Tokens / puzzle', hoverPoint.input.avgCompletionTokens > 0 ? formatTokensExact(hoverPoint.input.avgCompletionTokens) : '—', metric === 'tokens'],
+              ].map(([label, value, current]) => (
+                <div key={label as string} className="contents">
+                  <dt className={current ? 'text-[var(--text-secondary)]' : 'text-[var(--text-tertiary)]'}>{label}</dt>
+                  <dd className={`text-right font-mono tabular-nums ${current ? 'font-semibold text-[var(--text-primary)]' : 'font-medium text-[var(--text-secondary)]'}`}>
+                    {value}
+                  </dd>
                 </div>
               ))}
             </dl>
           </div>
         )}
       </div>
+
+      {missingCount > 0 && (
+        <p className="mt-3 text-center text-xs text-[var(--text-tertiary)]">
+          {missingCount === 1 ? '1 model has' : `${missingCount} models have`} no {config.missing} data and {missingCount === 1 ? 'is' : 'are'} left out.
+        </p>
+      )}
 
       {/* Narrow screens: the label column becomes a tappable legend under the plot. */}
       {!sideLegend && size.width > 0 && (

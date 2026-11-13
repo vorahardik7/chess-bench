@@ -464,7 +464,16 @@ export default function BenchmarksTab({
     () =>
       modelsByScore.flatMap((m) => {
         const summary = results.models.find((r) => r.id === m.id)?.summary;
-        return summary ? [{ id: m.id, name: m.name, score: m.score, totalCost: summary.totalCost }] : [];
+        return summary
+          ? [{
+              id: m.id,
+              name: m.name,
+              score: m.score,
+              totalCost: summary.totalCost,
+              avgLatencyMs: summary.avgLatencyMs,
+              avgCompletionTokens: summary.avgCompletionTokens,
+            }]
+          : [];
       }),
     [modelsByScore, results.models]
   );
@@ -484,7 +493,7 @@ export default function BenchmarksTab({
 
   const tabs = [
     { key: 'leaderboard', label: 'Table', icon: Trophy },
-    { key: 'value', label: 'Cost', icon: ChartScatter },
+    { key: 'value', label: 'Efficiency', icon: ChartScatter },
   ] as const;
 
   const trackIds = useMemo(() => {
@@ -610,12 +619,12 @@ export default function BenchmarksTab({
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-5">
           <div>
             <h2 className="text-xl font-semibold leading-tight tracking-[-0.02em]" style={{ color: 'var(--text-primary)' }}>
-              {activeTab === 'leaderboard' ? 'Standings' : 'Cost vs accuracy'}
+              {activeTab === 'leaderboard' ? 'Standings' : 'Efficiency'}
             </h2>
             <div className="mt-1 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
               {activeTab === 'leaderboard'
                 ? 'Every model, ranked by puzzles solved'
-                : 'What each point of accuracy costs. Up and to the left is better'}
+                : 'What each point of accuracy costs in money, time or tokens. Up and to the left is better'}
             </div>
           </div>
 
@@ -874,11 +883,6 @@ export default function BenchmarksTab({
         {activeTab === 'leaderboard' && (
           <div className="mt-3 text-xs text-center" style={{ color: 'var(--text-tertiary)' }}>
             Accuracy is the share of puzzles solved, judged move by move as on Lichess. Tactic columns show the percent solved, shaded by score.
-          </div>
-        )}
-        {activeTab === 'value' && costInputs.some((m) => m.totalCost <= 0) && (
-          <div className="mt-3 text-xs text-center" style={{ color: 'var(--text-tertiary)' }}>
-            Models without cost data are left out.
           </div>
         )}
       </section>
