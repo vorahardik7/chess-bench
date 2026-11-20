@@ -63,12 +63,12 @@ export type BenchmarkConfig = {
 
 const config: BenchmarkConfig = {
   apiProvider: "openrouter",
-  modelId: "google/gemini-4-neon",
-  variantId: "low",
-  modelName: "Gemini 4 Neon [low]",
-  reasoningEffort: "low",
+  modelId: "nvidia/nemotron-3-ultra-550b-a55b:free",
+  variantId: "high",
+  modelName: "Nemotron 3 Ultra 550B [high]",
+  reasoningEffort: "high",
   requestTimeoutMs: 1800000,
-  providerOrder: ["google-vertex/global"],
+  providerOrder: ["nvidia"],
 };
 
 export default config;
