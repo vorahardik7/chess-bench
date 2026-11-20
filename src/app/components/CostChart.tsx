@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { getModelLogoClass, getModelLogoPath, getModelProvider } from './utils';
+import { getModelLogoClass, getModelLogoPath } from './utils';
+import { parseModelFamily } from '../lib/models';
 
 /**
  * Accuracy vs cost, time or tokens, drawn as plain SVG so hover is predictable: every line has a wide
@@ -43,8 +44,8 @@ type ValueFamily = {
 type CostScale = 'log' | 'linear';
 
 const DEFAULT_VALUE_FAMILIES = 8;
-const LABEL_GAP = 24;
-const LABEL_COLUMN = 236;
+const LABEL_GAP = 32;
+const LABEL_COLUMN = 256;
 const SIDE_LEGEND_MIN_WIDTH = 760;
 
 // Each lab keeps one hue; its families step through lightness and a small hue drift so lines stay distinct.
@@ -67,7 +68,7 @@ const SHADE_STEPS = [
   { dl: 0.12, dh: -50 },
 ];
 
-function familyColor(provider: string, shade: number) {
+export function familyColor(provider: string, shade: number) {
   const lab = LAB_HUES[provider] ?? { hue: 75, chroma: 0.25, neutral: true };
   const step = SHADE_STEPS[shade % SHADE_STEPS.length];
   const base = lab.neutral ? 'var(--lab-l) + 0.12' : 'var(--lab-l)';
@@ -76,10 +77,7 @@ function familyColor(provider: string, shade: number) {
 
 // "GPT-6 Astra [high]" -> one family ("GPT-6 Astra"), drawn as a single line across effort levels.
 function modelFamily(model: { id: string; name: string }) {
-  const match = /^(.*?)\s*\[([^\]]+)\]$/.exec(model.name);
-  const provider = getModelProvider(model.id);
-  const name = match ? match[1] : model.name;
-  return { key: `${provider}:${name}`, name, effort: match ? match[2] : null, provider };
+  return parseModelFamily(model);
 }
 
 /** Variants of the strongest families, so the default chart shows whole lines rather than stray points. */
@@ -211,16 +209,19 @@ function AxisTag({ x, y, text, color, anchor }: { x: number; y: number; text: st
 // Push overlapping labels apart while keeping each as close to its line end as possible.
 function spreadLabels<T extends { y: number }>(items: T[], top: number, bottom: number): T[] {
   const sorted = [...items].sort((a, b) => a.y - b.y).map((item) => ({ ...item }));
-  for (let i = 1; i < sorted.length; i += 1) {
-    sorted[i].y = Math.max(sorted[i].y, sorted[i - 1].y + LABEL_GAP);
+  const count = sorted.length;
+  if (count === 0) return sorted;
+  const gap = count > 1 ? Math.min(LABEL_GAP, Math.max(22, (bottom - top) / (count - 1))) : LABEL_GAP;
+  for (let i = 1; i < count; i += 1) {
+    sorted[i].y = Math.max(sorted[i].y, sorted[i - 1].y + gap);
   }
-  const last = sorted.length - 1;
-  if (last >= 0) sorted[last].y = Math.min(sorted[last].y, bottom);
+  const last = count - 1;
+  sorted[last].y = Math.min(sorted[last].y, bottom);
   for (let i = last - 1; i >= 0; i -= 1) {
-    sorted[i].y = Math.min(sorted[i].y, sorted[i + 1].y - LABEL_GAP);
+    sorted[i].y = Math.min(sorted[i].y, sorted[i + 1].y - gap);
   }
-  for (let i = 0; i < sorted.length; i += 1) {
-    sorted[i].y = Math.max(sorted[i].y, i === 0 ? top : sorted[i - 1].y + LABEL_GAP);
+  for (let i = 0; i < count; i += 1) {
+    sorted[i].y = Math.max(sorted[i].y, i === 0 ? top : sorted[i - 1].y + gap);
   }
   return sorted;
 }
@@ -387,9 +388,10 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
     const linearTicks = linearCostTicks(maxCost * 1.05);
     const lo = scores.length ? Math.min(...scores) : 0;
     const hi = scores.length ? Math.max(...scores) : 100;
-    const yStep = hi - lo > 40 ? 10 : 5;
-    const yMin = Math.max(0, Math.floor((lo - 1.5) / yStep) * yStep);
-    const yMax = Math.min(100, Math.ceil((hi + 1.5) / yStep) * yStep);
+    const span = hi - lo;
+    const yStep = span > 65 ? 20 : span > 30 ? 10 : 5;
+    const yMin = Math.max(0, Math.floor((lo - 2) / yStep) * yStep);
+    const yMax = Math.min(100, Math.ceil((hi + 2) / yStep) * yStep);
 
     return {
       points,
@@ -408,7 +410,7 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
   const pinnedKey = pinned && data.familiesByKey.has(pinned) ? pinned : null;
   const activeKey = hovered ?? pinnedKey;
   const sideLegend = size.width >= SIDE_LEGEND_MIN_WIDTH;
-  const margin = { top: 14, right: sideLegend ? LABEL_COLUMN : 18, bottom: 72, left: 54 };
+  const margin = { top: 20, right: sideLegend ? LABEL_COLUMN : 18, bottom: 72, left: 56 };
   const plot = {
     x: margin.left,
     y: margin.top,
@@ -469,17 +471,17 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
           const end = family.points[family.points.length - 1];
           return { family, x: xScale(end.x), anchorY: yScale(end.score), y: yScale(end.score) };
         }),
-        plot.y + 10,
-        plot.y + plot.h - 4
+        plot.y + 13,
+        plot.y + plot.h - 13
       )
     : [];
-  const labelX = plot.x + plot.w + 30;
+  const labelX = plot.x + plot.w + 28;
 
   const missingCount = models.length - data.points.length;
 
   if (data.points.length === 0) {
     return (
-      <div className="flex h-[clamp(320px,calc(100dvh-26rem),600px)] flex-col items-center justify-center gap-3 text-sm text-[var(--text-tertiary)]">
+      <div className="flex h-[clamp(390px,calc(100dvh-21rem),560px)] flex-col items-center justify-center gap-3 text-sm text-[var(--text-tertiary)]">
         {models.length > 0 && <MetricSwitch metric={metric} onMetric={setMetric} />}
         {models.length === 0 ? 'No models selected.' : `None of the selected models have ${config.missing} data.`}
         {onReset && (
@@ -502,7 +504,7 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
         <ChartControls showPareto={showPareto} onPareto={setShowPareto} scale={scale} onScale={setScale} />
       </div>
 
-      <div ref={wrapRef} className="value-chart relative h-[clamp(320px,calc(100dvh-26rem),600px)] w-full select-none" onPointerLeave={clearHover}>
+      <div ref={wrapRef} className="value-chart relative h-[clamp(390px,calc(100dvh-21rem),560px)] w-full select-none" onPointerLeave={clearHover}>
         {plot.w > 40 && plot.h > 40 && (
           <svg
             width={size.width}
@@ -660,9 +662,9 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
                   />
                   <rect
                     x={labelX - 8}
-                    y={y - 12}
-                    width={LABEL_COLUMN - 40}
-                    height={24}
+                    y={y - 13}
+                    width={LABEL_COLUMN - 22}
+                    height={26}
                     rx={6}
                     fill="currentColor"
                     fillOpacity={active ? 0.12 : 0}
@@ -682,7 +684,7 @@ export default function CostChart({ models, onReset }: { models: CostInput[]; on
                   >
                     {family.name.length > 20 ? `${family.name.slice(0, 19)}…` : family.name}
                   </text>
-                  <text x={labelX + LABEL_COLUMN - 56} y={y} dominantBaseline="central" textAnchor="end" className="value-label-score">
+                  <text x={labelX + LABEL_COLUMN - 40} y={y} dominantBaseline="central" textAnchor="end" className="value-label-score">
                     {family.best.toFixed(1)}%
                   </text>
                 </g>

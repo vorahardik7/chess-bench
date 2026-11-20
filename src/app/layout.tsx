@@ -21,8 +21,8 @@ const geistMono = Geist_Mono({
   variable: "--font-app-mono",
 });
 
-// Runs before paint so a leaderboard deep link doesn't flash the puzzle view first.
-const TAB_SCRIPT = `try{var tab=new URLSearchParams(location.search).get("tab");if(tab==="benchmark"||tab==="leaderboard"||location.hash==="#benchmarks")document.documentElement.dataset.benchTab="leaderboard"}catch(e){}`;
+// Runs before paint so a leaderboard or puzzle deep link doesn't flash the charts view first.
+const TAB_SCRIPT = `try{var tab=new URLSearchParams(location.search).get("tab");if(tab==="benchmark"||tab==="leaderboard"||location.hash==="#benchmarks")document.documentElement.dataset.benchTab="leaderboard";else if(tab==="puzzles"||tab==="puzzle")document.documentElement.dataset.benchTab="puzzles"}catch(e){}`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),

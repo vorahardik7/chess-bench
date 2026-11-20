@@ -63,12 +63,12 @@ export type BenchmarkConfig = {
 
 const config: BenchmarkConfig = {
   apiProvider: "openrouter",
-  modelId: "openai/gpt-6.2-sol",
-  variantId: "high",
-  modelName: "GPT-6.2 Sol [high]",
-  reasoningEffort: "high",
+  modelId: "google/gemini-4-neon",
+  variantId: "low",
+  modelName: "Gemini 4 Neon [low]",
+  reasoningEffort: "low",
   requestTimeoutMs: 1800000,
-  providerOrder: ["openai"],
+  providerOrder: ["google-vertex/global"],
 };
 
 export default config;

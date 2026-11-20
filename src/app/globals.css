@@ -302,33 +302,41 @@ input[data-seamless]:focus-visible {
   background-color: rgba(232, 200, 133, 0.5);
 }
 
-/* Set from the head script when the URL asks for the leaderboard, so that
+/* Set from the head script when the URL asks for leaderboard or puzzles, so that
    panel is visible before hydration. Removed once React's view matches. */
-html[data-bench-tab='leaderboard'] #panel-puzzles {
+html[data-bench-tab='leaderboard'] #panel-charts,
+html[data-bench-tab='puzzles'] #panel-charts {
   display: none !important;
 }
 html[data-bench-tab='leaderboard'] #panel-leaderboard {
   display: block !important;
 }
-html[data-bench-tab='leaderboard'] #tab-puzzles {
+html[data-bench-tab='puzzles'] #panel-puzzles {
+  display: flex !important;
+}
+html[data-bench-tab='leaderboard'] #tab-charts,
+html[data-bench-tab='puzzles'] #tab-charts {
   background: transparent !important;
   color: var(--text-secondary) !important;
   box-shadow: none !important;
 }
 .view-enter {
-  animation: view-enter 180ms ease-out;
+  animation: view-enter 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 @keyframes view-enter {
   from {
-    opacity: 0.4;
+    opacity: 0;
+    transform: translateY(5px);
   }
   to {
     opacity: 1;
+    transform: translateY(0);
   }
 }
 
-html[data-bench-tab='leaderboard'] #tab-leaderboard {
+html[data-bench-tab='leaderboard'] #tab-leaderboard,
+html[data-bench-tab='puzzles'] #tab-puzzles {
   background: var(--accent) !important;
   color: var(--on-accent) !important;
   box-shadow: 0 2px 10px -3px var(--accent) !important;

@@ -14,6 +14,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { getLatestResults } from '../lib/results';
+import { countBaseModels } from '../lib/models';
 import StructuredData from '../components/StructuredData';
 import MethodologyToc, { type TocItem } from '../components/MethodologyToc';
 import CopyButton from '../components/CopyButton';
@@ -239,11 +240,13 @@ export default async function MethodologyPage() {
   const share = (count: number) => (attempts.length ? (count / attempts.length) * 100 : 0);
   const scoredTotal = parseRows.filter((r) => r.scored).reduce((sum, r) => sum + r.count, 0);
 
+  const baseModelCount = countBaseModels(models);
+
   const facts = [
     { value: formatInteger(puzzles.length), label: 'Puzzles' },
     { value: String(tracks.length), label: 'Tactic types' },
     { value: String(bands.length), label: 'Rating bands' },
-    { value: formatInteger(models.length), label: models.length === 1 ? 'Model' : 'Models' },
+    { value: formatInteger(baseModelCount), label: baseModelCount === 1 ? 'Model' : 'Models' },
     { value: formatInteger(attempts.length), label: 'Graded answers' },
   ];
 

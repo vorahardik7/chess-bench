@@ -2,13 +2,14 @@ import Link from 'next/link';
 import { Star } from 'lucide-react';
 import SiteNav from './SiteNav';
 import { getLatestResults } from '../lib/results';
+import { countBaseModels } from '../lib/models';
 
 export default async function SiteHeader() {
   const results = await getLatestResults();
+  const baseModelCount = countBaseModels(results.models);
   const stats = [
-    { value: results.models.length, label: 'models' },
+    { value: baseModelCount, label: baseModelCount === 1 ? 'model' : 'models' },
     { value: results.puzzles.length, label: 'Lichess puzzles' },
-    { value: new Set(results.puzzles.map((puzzle) => puzzle.level)).size, label: 'puzzle types' },
   ];
 
   return (

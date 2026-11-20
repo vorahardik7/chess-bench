@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 
-/** Legacy URL: same UI lives on `/` with client tabs (puzzle is default). */
+/** Legacy URL: puzzle browser opens on `/` via the Puzzle Browser tab. */
 export default function LegacyPuzzlePage() {
-  redirect('/');
+  redirect('/?tab=puzzles');
 }

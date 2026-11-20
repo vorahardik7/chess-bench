@@ -1,14 +1,16 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useState, useSyncExternalStore, type ComponentType } from 'react';
-import { Puzzle, Trophy, type LucideIcon } from 'lucide-react';
-import PuzzlesTab from './PuzzlesTab';
+import { motion } from 'motion/react';
+import { ChartScatter, Puzzle, Trophy, type LucideIcon } from 'lucide-react';
+import ChartsTab from './ChartsTab';
 import BrandLoader from './BrandLoader';
 import type { ExplorerResults } from '../lib/results.types';
 
-type BenchmarksComponent = ComponentType<{ results: ExplorerResults }>;
+type TabComponent = ComponentType<{ results: ExplorerResults }>;
 
-let cachedBenchmarks: BenchmarksComponent | null = null;
+let cachedBenchmarks: TabComponent | null = null;
+let cachedPuzzles: TabComponent | null = null;
 
 function preloadBenchmarks() {
   return import('./BenchmarksTab').then((mod) => {
@@ -17,20 +19,25 @@ function preloadBenchmarks() {
   });
 }
 
-function LeaderboardSkeleton() {
+function preloadPuzzles() {
+  return import('./PuzzlesTab').then((mod) => {
+    cachedPuzzles = mod.default;
+    return mod.default;
+  });
+}
+
+function TabSkeleton({ label }: { label: string }) {
   return (
     <div className="grid min-h-[max(640px,calc(100dvh-14rem))] place-items-center rounded-xl border border-[var(--border)] bg-[var(--surface)]">
       <div className="loader-enter">
-        <BrandLoader label="Loading standings" size={36} />
+        <BrandLoader label={label} size={36} />
       </div>
     </div>
   );
 }
 
 function LeaderboardPanel({ results }: { results: ExplorerResults }) {
-  // Keep the component in an object. useState calls a function passed as the
-  // initial value, which would render the tab with no props.
-  const [loaded, setLoaded] = useState<{ Component: BenchmarksComponent } | null>(() =>
+  const [loaded, setLoaded] = useState<{ Component: TabComponent } | null>(() =>
     cachedBenchmarks ? { Component: cachedBenchmarks } : null
   );
 
@@ -45,20 +52,42 @@ function LeaderboardPanel({ results }: { results: ExplorerResults }) {
     };
   }, [loaded]);
 
-  if (!loaded) return <LeaderboardSkeleton />;
+  if (!loaded) return <TabSkeleton label="Loading standings" />;
+  const { Component } = loaded;
+  return <Component results={results} />;
+}
+
+function PuzzlesPanel({ results }: { results: ExplorerResults }) {
+  const [loaded, setLoaded] = useState<{ Component: TabComponent } | null>(() =>
+    cachedPuzzles ? { Component: cachedPuzzles } : null
+  );
+
+  useEffect(() => {
+    if (loaded) return;
+    let cancelled = false;
+    void preloadPuzzles().then((Component) => {
+      if (!cancelled) setLoaded({ Component });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loaded]);
+
+  if (!loaded) return <TabSkeleton label="Loading puzzle browser" />;
   const { Component } = loaded;
   return (
-    <div className="view-enter">
+    <div className="flex flex-1 flex-col min-h-0">
       <Component results={results} />
     </div>
   );
 }
 
-export type ExplorerView = 'puzzles' | 'leaderboard';
+export type ExplorerView = 'charts' | 'leaderboard' | 'puzzles';
 
 const TABS: { id: ExplorerView; label: string; icon: LucideIcon }[] = [
-  { id: 'puzzles', label: 'Puzzle Browser', icon: Puzzle },
+  { id: 'charts', label: 'Charts', icon: ChartScatter },
   { id: 'leaderboard', label: 'Leaderboard', icon: Trophy },
+  { id: 'puzzles', label: 'Puzzle Browser', icon: Puzzle },
 ];
 
 const locationListeners = new Set<() => void>();
@@ -79,13 +108,15 @@ function notifyLocationListeners() {
 function viewFromLocation(fallback: ExplorerView): ExplorerView {
   const tab = new URLSearchParams(window.location.search).get('tab');
   if (tab === 'benchmark' || tab === 'leaderboard') return 'leaderboard';
+  if (tab === 'puzzles' || tab === 'puzzle') return 'puzzles';
+  if (tab === 'charts') return 'charts';
   if (window.location.hash === '#benchmarks') return 'leaderboard';
   return fallback;
 }
 
 export default function BenchmarkExplorer({
   results,
-  initialView = 'puzzles',
+  initialView = 'charts',
 }: {
   results: ExplorerResults;
   initialView?: ExplorerView;
@@ -96,15 +127,21 @@ export default function BenchmarkExplorer({
     () => initialView,
   );
   const [leaderboardReady, setLeaderboardReady] = useState(view === 'leaderboard');
+  const [puzzlesReady, setPuzzlesReady] = useState(view === 'puzzles');
   const [hasSwitched, setHasSwitched] = useState(false);
+
   if (view === 'leaderboard' && !leaderboardReady) {
     setLeaderboardReady(true);
+  }
+  if (view === 'puzzles' && !puzzlesReady) {
+    setPuzzlesReady(true);
   }
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       void preloadBenchmarks();
-    }, 600);
+      void preloadPuzzles();
+    }, 150);
     return () => window.clearTimeout(timeout);
   }, []);
 
@@ -119,10 +156,13 @@ export default function BenchmarkExplorer({
     if (next === 'leaderboard') {
       setLeaderboardReady(true);
       void preloadBenchmarks();
+    } else if (next === 'puzzles') {
+      setPuzzlesReady(true);
+      void preloadPuzzles();
     }
     const url = new URL(window.location.href);
-    if (next === 'leaderboard') url.searchParams.set('tab', 'benchmark');
-    else url.searchParams.delete('tab');
+    if (next === 'charts') url.searchParams.delete('tab');
+    else url.searchParams.set('tab', next);
     url.hash = '';
     const nextUrl = `${url.pathname}${url.search}`;
     window.history.replaceState(null, '', nextUrl);
@@ -134,7 +174,7 @@ export default function BenchmarkExplorer({
       <div
         role="tablist"
         aria-label="ChessBench views"
-        className="inline-flex w-fit items-center gap-1 rounded-xl border border-[var(--border-strong)] bg-[var(--surface)] p-1"
+        className="relative inline-flex w-fit items-center gap-1 rounded-xl border border-[var(--border-strong)] bg-[var(--surface)] p-1"
       >
         {TABS.map((tab) => {
           const selected = view === tab.id;
@@ -149,22 +189,51 @@ export default function BenchmarkExplorer({
               aria-controls={`panel-${tab.id}`}
               onMouseEnter={() => {
                 if (tab.id === 'leaderboard') void preloadBenchmarks();
+                else if (tab.id === 'puzzles') void preloadPuzzles();
               }}
               onFocus={() => {
                 if (tab.id === 'leaderboard') void preloadBenchmarks();
+                else if (tab.id === 'puzzles') void preloadPuzzles();
               }}
               onClick={() => selectView(tab.id)}
-              className={`flex h-8 items-center gap-2 rounded-lg px-4 text-sm font-semibold transition-colors ${
+              className={`relative flex h-8 items-center gap-2 rounded-lg px-4 text-sm font-semibold transition-colors ${
                 selected
-                  ? 'bg-[var(--accent)] text-[var(--on-accent)] shadow-[0_2px_10px_-3px_var(--accent)]'
+                  ? 'text-[var(--on-accent)]'
                   : 'text-[var(--text-secondary)] hover:bg-[var(--surface-raised)] hover:text-[var(--text-primary)]'
               }`}
             >
-              <Icon className="h-4 w-4" strokeWidth={2.25} />
-              {tab.label}
+              {selected && (
+                <motion.span
+                  layoutId="explorer-tab-pill"
+                  className="absolute inset-0 rounded-lg bg-[var(--accent)] shadow-[0_2px_10px_-3px_var(--accent)]"
+                  transition={{ type: 'spring', stiffness: 500, damping: 38 }}
+                />
+              )}
+              <Icon className="relative h-4 w-4" strokeWidth={2.25} />
+              <span className="relative">{tab.label}</span>
             </button>
           );
         })}
+      </div>
+
+      <div
+        role="tabpanel"
+        id="panel-charts"
+        aria-labelledby="tab-charts"
+        hidden={view !== 'charts'}
+        className={view === 'charts' ? (hasSwitched ? 'view-enter' : undefined) : 'hidden'}
+      >
+        <ChartsTab results={results} />
+      </div>
+
+      <div
+        role="tabpanel"
+        id="panel-leaderboard"
+        aria-labelledby="tab-leaderboard"
+        hidden={view !== 'leaderboard'}
+        className={view === 'leaderboard' ? (hasSwitched ? 'view-enter' : undefined) : 'hidden'}
+      >
+        {leaderboardReady ? <LeaderboardPanel results={results} /> : null}
       </div>
 
       <div
@@ -178,16 +247,7 @@ export default function BenchmarkExplorer({
             : 'hidden'
         }
       >
-        <PuzzlesTab results={results} />
-      </div>
-      <div
-        role="tabpanel"
-        id="panel-leaderboard"
-        aria-labelledby="tab-leaderboard"
-        hidden={view !== 'leaderboard'}
-        className={view === 'leaderboard' ? undefined : 'hidden'}
-      >
-        {leaderboardReady ? <LeaderboardPanel results={results} /> : null}
+        {puzzlesReady ? <PuzzlesPanel results={results} /> : null}
       </div>
     </div>
   );
